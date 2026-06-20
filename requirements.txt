@@ -5,4 +5,8 @@ playwright>=1.60.0
 websocket-client>=1.8.0
 urllib3>=2.0
 PyYAML>=6.0
+markdown>=3.7
+psutil>=5.9
+requests>=2.31
+websockets>=12.0
 # DouYin_Spider — 已clone到 external/DouYin_Spider (不是pip包)

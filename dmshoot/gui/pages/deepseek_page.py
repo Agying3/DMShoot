@@ -201,9 +201,15 @@ class DeepSeekPage(QWidget):
 
     def set_status(self, text: str):
         self.status.setText(text)
-        if text.startswith("已连接"):
+
+    def set_status_color(self, color: str):
+        """设置状态文字颜色: green / red / (空=默认灰)"""
+        if color == "green":
             self.status.setStyleSheet("color: #4ADE80; font-size: 12px; background: transparent;")
             self._connect_btn.setText("重新连接")
+        elif color == "red":
+            self.status.setStyleSheet("color: #F87171; font-size: 12px; background: transparent;")
+            self._connect_btn.setText("重试")
         else:
             self.status.setStyleSheet("color: rgba(255,255,255,0.70); font-size: 12px; background: transparent;")
             self._connect_btn.setText("连接")

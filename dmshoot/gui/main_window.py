@@ -3,6 +3,7 @@
 import sys
 import time
 import random
+import asyncio
 from pathlib import Path
 import ctypes
 import ctypes.wintypes
@@ -570,11 +571,14 @@ class MainWindow(QMainWindow):
             ai = get_ai()
             if ai.configured:
                 self.page_deepseek.set_status(f"已连接 {c.model}")
+                self.page_deepseek.set_status_color("green")
                 self.sidebar.update_ai_status("●")
             else:
                 self.page_deepseek.set_status(f"就绪 {c.model}")
+                self.page_deepseek.set_status_color("")
                 self.sidebar.update_ai_status("—")
         else:
+            self.page_deepseek.set_status("未连接")
             self.sidebar.update_ai_status("✕")
 
         if c.douyin_cookie:
@@ -637,15 +641,40 @@ class MainWindow(QMainWindow):
     # ── DeepSeek ──
 
     def _save_deepseek(self, api_key, base_url, model):
+        if not api_key.strip():
+            self.page_deepseek.set_status("请先输入 API Key")
+            self.page_deepseek.set_status_color("red")
+            return
+
         self.config.api_key = api_key
         self.config.base_url = base_url or "https://api.deepseek.com"
         self.config.model = model or "deepseek-v4-flash"
         database.save_config(self.config)
         self.page_deepseek.set_status("连接中...")
-        init_ai(self.config.api_key, self._get_prompt(), self.config.model, self._get_behavior_prompt())
-        get_ai().set_persona(self.config.prompt_preset)
-        QTimer.singleShot(600, lambda: self.page_deepseek.set_status(f"已连接 {self.config.model}"))
-        self.sidebar.update_ai_status("●")
+        self.page_deepseek.set_status_color("")
+
+        # 异步测试连接
+        loop = asyncio.get_event_loop()
+        loop.create_task(self._test_ai_connection())
+
+    async def _test_ai_connection(self):
+        """实际测试 API 连接"""
+        try:
+            init_ai(self.config.api_key, self._get_prompt(), self.config.model, self._get_behavior_prompt())
+            get_ai().set_persona(self.config.prompt_preset)
+            ok, err = await get_ai().test_connection()
+            if ok:
+                self.page_deepseek.set_status(f"已连接 {self.config.model}")
+                self.page_deepseek.set_status_color("green")
+                self.sidebar.update_ai_status("●")
+            else:
+                self.page_deepseek.set_status(err)
+                self.page_deepseek.set_status_color("red")
+                self.sidebar.update_ai_status("○")
+        except Exception as e:
+            self.page_deepseek.set_status(f"连接失败: {e}")
+            self.page_deepseek.set_status_color("red")
+            self.sidebar.update_ai_status("○")
 
     def _on_prompt_change(self, name: str):
         """角色提示词切换 — 保存配置 + 更新 AI 角色名"""

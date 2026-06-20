@@ -164,6 +164,12 @@ def setup_console_logging(level: int = logging.DEBUG):
     if _initialized:
         return
 
+    # Windows: 启用 ANSI 转义序列
+    if sys.platform == "win32":
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+
     # 根 logger
     root = logging.getLogger()
     root.setLevel(level)

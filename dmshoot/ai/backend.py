@@ -44,6 +44,31 @@ class AIBackend:
     def configured(self) -> bool:
         return bool(self.api_key)
 
+    async def test_connection(self) -> tuple[bool, str]:
+        """测试 API 连接是否有效，返回 (成功, 错误信息)"""
+        if not self.api_key:
+            return False, "请先输入 API Key"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"{self.base_url}/models",
+                    headers={"Authorization": f"Bearer {self.api_key}"}
+                )
+                if resp.status_code == 200:
+                    return True, ""
+                elif resp.status_code == 401:
+                    return False, "API Key 无效（401 Unauthorized）"
+                elif resp.status_code == 403:
+                    return False, "API Key 无权限（403 Forbidden）"
+                else:
+                    return False, f"连接失败（HTTP {resp.status_code}）"
+        except httpx.ConnectError:
+            return False, "无法连接服务器，请检查 Base URL"
+        except httpx.TimeoutException:
+            return False, "连接超时，请检查网络"
+        except Exception as e:
+            return False, f"连接异常: {e}"
+
     def clear_context(self, session_id: str):
         """清除指定会话的上下文"""
         self._contexts.pop(session_id, None)
