@@ -1,0 +1,54 @@
+name: DMShoot 自动化测试
+
+on:
+  push:
+    branches: [master, main, test-coverage-fixes]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-qt pytest-html
+
+      - name: 创建报告目录
+        run: |
+          mkdir -p reports/screenshots
+
+      - name: 运行 pytest（无 GUI 测试）
+        run: |
+          pytest tests/ -m "not gui" --html=reports/test_report.html --self-contained-html --tb=short -v
+        continue-on-error: true
+
+      - name: 上传测试报告
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-report
+          path: reports/
+          retention-days: 7
+
+      - name: 测试结果摘要
+        if: always()
+        run: |
+          echo "测试报告已生成: reports/test_report.html"
+          if (Test-Path reports/screenshots) {
+            $count = (Get-ChildItem reports/screenshots -Filter *.png).Count
+            echo "失败截图: $count 张"
+          }

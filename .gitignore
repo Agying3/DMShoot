@@ -18,9 +18,9 @@ build/
 Thumbs.db
 .DS_Store
 
-# ── 敏感数据（绝不提交）──
+# ---- Sensitive data (never commit) ----
 
-# 数据库
+# Database
 dmshoot/data/*.db
 dmshoot/data/*.db-*
 *.db-shm
@@ -35,39 +35,50 @@ dmshoot/data/*_debug.txt
 dmshoot/data/*_probe.*
 dmshoot/data/*_captured.*
 dmshoot/data/startup_log.*
-*.bin
-dmshoot-go/
 
-# AI 角色提示词
-prompts/
+# AI 角色提示词（仅排除圡泬和柁炑）
+prompts/圡泬.txt
+prompts/柁炑.txt
 
-# 小红书逆向签名
-dmshoot/plugins/xiaohongshu/static/
+# ---- Dependencies: only exclude node_modules and secrets ----
+external/*/node_modules/
+external/*/.env
+dmshoot/plugins/xiaohongshu/static/node_modules/
+dmshoot/plugins/xiaohongshu/static/package-lock.json
 
-# ── 日志 ──
+# dmshoot-go: only exclude compiled binaries
+dmshoot-go/*.exe
+dmshoot-go/*.exe~
+dmshoot-go/dmshoot/
+
+# tools: only keep wal_checkpoint.py
+tools/ngrok.exe
+tools/platform-tools/
+tools/trash_tool/
+tools/xhs_apk_mod/
+
+# ---- Logs ----
 *.log
 logs/
 
-# ── 工具 / 逆向（绝不提交）──
+# ---- Reverse engineering tools (never commit) ----
 scripts/
-external/
-tools/
 
-# ── 截图 / 报告 ──
+# ---- Screenshots / reports ----
 screenshot*.png
 docs/test_screenshots/
 reports/
 
-# ── 编译产物 ──
+# ---- Build artifacts ----
 *.exe
 *.exe~
 *.pdb
 
-# ── Node.js ──
+# ---- Node.js ----
 node_modules/
 package-lock.json
 
-# ── 杂项 ──
+# ---- Misc ----
 $null
 bg.jpg
 nul
