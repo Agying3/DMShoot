@@ -1,0 +1,3 @@
+dmshoot/plugins/xiaohongshu/static/* linguist-vendored
+external/DouYin_Spider/static/*.js linguist-vendored
+docs/*.html linguist-vendored
