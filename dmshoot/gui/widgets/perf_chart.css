@@ -1,0 +1,118 @@
+/* DMShoot Performance Monitor - Dark Theme QSS */
+
+/* ── Inline chart card (inside settings tab) ── */
+.PerfChart {
+  background: transparent;
+}
+
+/* ── Popup chart window ── */
+#perfCard {
+  background: #1a1b25;
+  border: 0.5px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+}
+
+/* ── Chart view (QtChart background) ── */
+QChartView {
+  background: transparent;
+  border: none;
+}
+
+/* ── Toggle checkbox palette ── */
+QCheckBox {
+  color: rgba(255,255,255,0.4);
+  font-size: 11px;
+  spacing: 6px;
+}
+QCheckBox::indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1.5px solid rgba(255,255,255,0.12);
+  background: transparent;
+}
+QCheckBox::indicator:checked {
+  background: rgba(55,138,221,0.30);
+  border-color: #378add;
+}
+
+/* ── Scheme buttons ── */
+QPushButton.scheme-btn {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 0.5px solid rgba(255,255,255,0.08);
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  background: transparent;
+}
+QPushButton.scheme-btn:hover {
+  border-color: rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.6);
+}
+QPushButton.scheme-btn:checked {
+  background: rgba(55,138,221,0.15);
+  border-color: #378add;
+  color: #85b7eb;
+}
+
+/* ── Theme toggle buttons ── */
+QPushButton.theme-btn {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 0.5px solid rgba(255,255,255,0.08);
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  background: transparent;
+}
+QPushButton.theme-btn:hover {
+  border-color: rgba(255,255,255,0.15);
+  color: rgba(255,255,255,0.6);
+}
+QPushButton.theme-btn:checked {
+  border-color: #378add;
+  color: #378add;
+}
+
+/* ── Metric cards ── */
+QFrame#metricCard {
+  background: #1a1b25;
+  border: 0.5px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+QFrame#metricCard QLabel.label {
+  color: rgba(255,255,255,0.35);
+  font-size: 11px;
+}
+QFrame#metricCard QLabel.value {
+  font-size: 22px;
+  font-weight: 500;
+}
+
+/* ── Header title ── */
+QLabel#headerTitle {
+  font-size: 18px;
+  font-weight: 500;
+  color: #ffffff;
+}
+QLabel#headerSub {
+  font-size: 12px;
+  color: rgba(255,255,255,0.4);
+}
+
+/* ── Separator line ── */
+QFrame#sep {
+  width: 1px;
+  background: rgba(255,255,255,0.08);
+}
+
+/* ── Chart title ── */
+QLabel.chartTitle {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.35);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  padding: 0;
+  margin: 0 0 6px 0;
+}

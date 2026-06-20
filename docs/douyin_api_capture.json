@@ -1,0 +1,107 @@
+[
+  {
+    "time": "2026-05-31T17:25:33.910439",
+    "method": "CONNECT",
+    "host": "main.vscode-cdn.net:443"
+  },
+  {
+    "time": "2026-05-31T17:25:34.021993",
+    "method": "CONNECT",
+    "host": "mcs.zijieapi.com:443"
+  },
+  {
+    "time": "2026-05-31T17:25:34.552160",
+    "method": "CONNECT",
+    "host": "imapi.douyin.com:443"
+  },
+  {
+    "time": "2026-05-31T17:25:40.549024",
+    "method": "CONNECT",
+    "host": "copilot.tencent.com:443"
+  },
+  {
+    "time": "2026-05-31T17:26:04.550273",
+    "method": "CONNECT",
+    "host": "mon.zijieapi.com:443"
+  },
+  {
+    "time": "2026-05-31T17:26:22.570574",
+    "method": "CONNECT",
+    "host": "tnc0-aliec2.zijieapi.com:443"
+  },
+  {
+    "time": "2026-05-31T17:26:22.597954",
+    "method": "CONNECT",
+    "host": "tnc0-alisc1.zijieapi.com:443"
+  },
+  {
+    "time": "2026-05-31T17:26:22.612939",
+    "method": "CONNECT",
+    "host": "8.133.123.137:443"
+  },
+  {
+    "time": "2026-05-31T17:26:22.618935",
+    "method": "CONNECT",
+    "host": "8.133.123.138:443"
+  },
+  {
+    "time": "2026-05-31T17:26:22.623946",
+    "method": "CONNECT",
+    "host": "8.133.123.139:443"
+  },
+  {
+    "time": "2026-05-31T17:26:22.628935",
+    "method": "CONNECT",
+    "host": "8.133.123.140:443"
+  },
+  {
+    "time": "2026-05-31T17:26:26.268242",
+    "method": "CONNECT",
+    "host": "mssdk.bytedance.com:443"
+  },
+  {
+    "time": "2026-05-31T17:26:26.946640",
+    "method": "CONNECT",
+    "host": "v95-web-sz.douyinvod.com:443"
+  },
+  {
+    "time": "2026-05-31T17:26:28.392634",
+    "method": "CONNECT",
+    "host": "p26-sign.douyinpic.com:443"
+  },
+  {
+    "time": "2026-05-31T17:26:28.393649",
+    "method": "CONNECT",
+    "host": "p3-sign.douyinpic.com:443"
+  },
+  {
+    "time": "2026-05-31T17:26:28.417632",
+    "method": "CONNECT",
+    "host": "www-hj.douyin.com:443"
+  },
+  {
+    "time": "2026-05-31T17:26:29.297696",
+    "method": "CONNECT",
+    "host": "www.douyin.com:443"
+  },
+  {
+    "time": "2026-05-31T17:26:30.556191",
+    "method": "CONNECT",
+    "host": "security.zijieapi.com:443"
+  },
+  {
+    "time": "2026-05-31T17:27:08.630556",
+    "method": "CONNECT",
+    "host": "pypi.org:443"
+  },
+  {
+    "time": "2026-05-31T17:27:10.269551",
+    "method": "CONNECT",
+    "host": "pc-mon.zijieapi.com:443"
+  },
+  {
+    "time": "2026-05-31T17:27:10.713799",
+    "method": "CONNECT",
+    "host": "dm.toutiao.com:443"
+  }
+]

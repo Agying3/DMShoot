@@ -1,0 +1,6 @@
+# DMShoot 测试依赖
+# 安装: pip install -r requirements-test.txt
+
+pytest>=7.0
+pytest-qt>=4.4
+pytest-html>=4.0

@@ -1,0 +1,294 @@
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111216; color: #cdd6f4; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; padding: 24px; }
+  .container { max-width: 1100px; margin: 0 auto; }
+  .header-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; }
+  .header-row h1 { font-size: 20px; font-weight: 500; color: #fff; margin-bottom: 4px; }
+  .header-row .sub { font-size: 13px; color: rgba(255,255,255,0.4); }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .scheme-btn, .theme-btn {
+    padding: 6px 14px; border-radius: 6px; border: 0.5px solid rgba(255,255,255,0.08); font-size: 12px; cursor: pointer;
+    transition: all .15s; background: transparent; color: rgba(255,255,255,0.4);
+  }
+  .scheme-btn:hover, .theme-btn:hover { border-color: rgba(255,255,255,0.15); color: rgba(255,255,255,0.6); }
+  .scheme-btn.active { background: rgba(55,138,221,0.15); border-color: #378add; color: #85b7eb; }
+  .theme-btn.active { border-color: #378add; color: #378add; }
+  .sep { display:inline-block; width:1px; height:20px; background:rgba(255,255,255,0.08); vertical-align:middle; }
+
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .metric-card { background: #1a1b25; border: 0.5px solid rgba(255,255,255,0.06); border-radius: 8px; padding: 14px 16px; cursor: pointer; transition: transform .15s; }
+  .metric-card:hover { transform: translateY(-1px); }
+  .metric-card .label { font-size: 11px; color: rgba(255,255,255,0.35); margin-bottom: 4px; }
+  .metric-card .value { font-size: 24px; font-weight: 500; }
+  .metric-card .change { font-size: 11px; margin-top: 2px; }
+
+  .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .chart-card { background: #1a1b25; border: 0.5px solid rgba(255,255,255,0.06); border-radius: 10px; padding: 16px; cursor: pointer; transition: transform .15s; }
+  .chart-card:hover { transform: translateY(-1px); }
+  .chart-card h2 { font-size: 12px; font-weight: 500; color: rgba(255,255,255,0.35); letter-spacing: 0.3px; margin-bottom: 10px; text-transform: uppercase; }
+  .chart-card.full { grid-column: 1 / -1; }
+  .chart-card .chart-wrap { position: relative; width: 100%; height: 200px; }
+  .chart-card.full .chart-wrap { height: 260px; }
+
+  /* Toggle bar */
+  .toggle-bar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+  .toggle-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: rgba(255,255,255,0.4); cursor: pointer; user-select: none; }
+  .toggle-item input[type=checkbox] { appearance: none; width: 12px; height: 12px; border-radius: 3px; border: 1.5px solid; cursor: pointer; position: relative; flex-shrink: 0; }
+  .toggle-item input[type=checkbox]:checked::after { content:''; position:absolute; left:2.5px; top:1px; width:4px; height:6px; border:solid #fff; border-width:0 1.5px 1.5px 0; transform:rotate(45deg); }
+  .toggle-item .dot { display:inline-block; width:7px; height:7px; border-radius:2px; flex-shrink:0; }
+
+  .gantt-row { display: flex; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 0.5px solid rgba(255,255,255,0.04); }
+  .gantt-row:last-child { border-bottom: none; }
+  .gantt-label { width: 100px; font-size: 12px; color: rgba(255,255,255,0.5); flex-shrink: 0; }
+  .gantt-track { flex: 1; height: 20px; background: rgba(255,255,255,0.03); border-radius: 4px; position: relative; overflow: hidden; }
+  .gantt-bar { height: 100%; border-radius: 4px; position: relative; display: flex; align-items: center; padding: 0 10px; transition: width .5s; }
+  .gantt-bar span { position: absolute; right: 10px; font-size: 11px; color: rgba(255,255,255,0.85); font-weight: 500; white-space: nowrap; }
+  .gantt-time { width: 50px; font-size: 11px; color: rgba(255,255,255,0.3); text-align: right; flex-shrink: 0; }
+
+  .modal-overlay { display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.5); backdrop-filter:blur(4px); justify-content:center; align-items:center; padding:40px; }
+  .modal-overlay.open { display:flex; }
+  .modal-card { max-width:800px; width:100%; background:#1a1b25; border:0.5px solid rgba(255,255,255,0.08); border-radius:14px; padding:24px; position:relative; animation:fadeUp .2s ease; }
+  .modal-card h2 { font-size:16px; font-weight:500; color:rgba(255,255,255,0.6); margin-bottom:16px; }
+  .modal-card .chart-wrap { position:relative; width:100%; height:340px; }
+  .modal-close { position:absolute; top:12px; right:16px; font-size:20px; background:none; border:none; color:rgba(255,255,255,0.3); cursor:pointer; padding:4px 8px; border-radius:4px; }
+  .modal-close:hover { background:rgba(255,255,255,0.06); }
+  @keyframes fadeUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+</style>
+
+<div class="container">
+  <div class="header-row">
+    <div>
+      <h1>Performance monitor</h1>
+      <p class="sub">real-time metrics · chart.js powered</p>
+    </div>
+    <div class="toolbar">
+      <button class="scheme-btn active" data-scheme="blue">Blue</button>
+      <button class="scheme-btn" data-scheme="teal">Teal</button>
+      <button class="scheme-btn" data-scheme="purple">Purple</button>
+      <button class="scheme-btn" data-scheme="orange">Orange</button>
+      <button class="scheme-btn" data-scheme="mono">Mono</button>
+      <span class="sep"></span>
+      <button class="theme-btn" data-theme="chart-dark">Chart dark</button>
+      <button class="theme-btn active" data-theme="chart-light">Chart light</button>
+    </div>
+  </div>
+
+  <div class="metrics" id="metricsRow"></div>
+  <div class="chart-grid" id="chartGrid"></div>
+</div>
+
+<div class="modal-overlay" id="chartModal">
+  <div class="modal-card">
+    <button class="modal-close" id="modalClose">&times;</button>
+    <h2 id="modalTitle"></h2>
+    <div class="chart-wrap"><canvas id="modalCanvas" role="img" aria-label="expanded chart"></canvas></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const SCHEMES = {
+  blue:{primary:'#378add',light:'#85b7eb',dim:'rgba(55,138,221,0.2)',accent:'#74c7ec'},
+  teal:{primary:'#1d9e75',light:'#5dcaa5',dim:'rgba(29,158,117,0.2)',accent:'#9fe1cb'},
+  purple:{primary:'#7f77dd',light:'#afa9ec',dim:'rgba(127,119,221,0.2)',accent:'#cecbf6'},
+  orange:{primary:'#d85a30',light:'#f0997b',dim:'rgba(216,90,48,0.2)',accent:'#f5c4b3'},
+  mono:{primary:'#5f5e5a',light:'#b4b2a9',dim:'rgba(95,94,90,0.2)',accent:'#d3d1c7'},
+};
+const BAR_COLORS = ['#378add','#74c7ec','#a6e3a1','#fab387','#cba6f7','#f9e2af','#f38ba8'];
+const BAR_COLORS_DIM = ['rgba(55,138,221,0.18)','rgba(116,199,236,0.18)','rgba(166,227,161,0.18)','rgba(250,179,135,0.18)','rgba(203,166,247,0.18)','rgba(249,226,175,0.18)','rgba(243,139,168,0.18)'];
+const labels=Array.from({length:30},(_,i)=>`${i*2}s`);
+let curScheme='blue',curTheme='chart-light',modalChart=null;
+
+function rw(len,base,amp){const v=[base+(Math.random()-0.5)*amp];for(let i=1;i<len;i++)v.push(Math.max(0,v[i-1]+(Math.random()-0.5)*amp*0.8));return v;}
+const lineD1=rw(30,280,200),lineD2=rw(30,120,80),lineD3=rw(30,40,30);
+const areaD1=rw(30,8,10),areaD2=rw(30,5,8),areaD3=rw(30,3,5);
+
+const ganttTasks=[
+  {label:'Bilibili poll',pct:90,color:'#378add',ms:'18ms'},
+  {label:'Douyin ws recv',pct:65,color:'#74c7ec',ms:'12ms'},
+  {label:'Ai inference',pct:45,color:'#a6e3a1',ms:'9.2s'},
+  {label:'Db write',pct:30,color:'#fab387',ms:'3ms'},
+  {label:'Send reply',pct:20,color:'#cba6f7',ms:'2ms'},
+];
+
+// Visibility state per dataset
+const vis={
+  lineAll:true,lineLatency:true,lineQueue:true,lineError:true,
+  areaAll:true,areaBili:true,areaDouyin:true,areaXhs:true,
+  doughnutAll:true,
+  barAll:true,
+};
+
+function isChartDark(){return curTheme==='chart-dark';}
+function chartText(){return isChartDark()?'rgba(255,255,255,0.4)':'rgba(0,0,0,0.35)';}
+function chartGrid(){return isChartDark()?'rgba(255,255,255,0.04)':'rgba(0,0,0,0.06)';}
+
+function renderMetrics(){
+  document.getElementById('metricsRow').innerHTML=[
+    {label:'Api latency',val:'342ms',ch:'-12% vs avg',color:'#85b7eb',chColor:'#a6e3a1'},
+    {label:'Queue depth',val:'3',ch:'+1 since last',color:'#a6e3a1',chColor:'#fab387'},
+    {label:'Message rate',val:'18/min',ch:'+2 vs avg',color:'#f9e2af',chColor:'#a6e3a1'},
+    {label:'Error rate',val:'0.4%',ch:'-0.1%',color:'#f38ba8',chColor:'#a6e3a1'},
+  ].map(m=>`<div class="metric-card"><div class="label">${m.label}</div><div class="value" style="color:${m.color}">${m.val}</div><div class="change" style="color:${m.chColor}">${m.ch}</div></div>`).join('');
+}
+
+// Build toggle checkbox
+function toggle(label,key,color){
+  const checked=vis[key]?'checked':'';
+  return `<label class="toggle-item"><input type="checkbox" data-key="${key}" ${checked} style="border-color:${color}30;background:${vis[key]?color+'30':'transparent'}" onchange="toggleSeries('${key}',this)"><span class="dot" style="background:${color}"></span>${label}</label>`;
+}
+function checkbox(label,key,color){
+  const checked=vis[key]?'checked':'';
+  return `<label class="toggle-item"><input type="checkbox" data-key="${key}" ${checked} style="border-color:${color}30;background:${vis[key]?color+'30':'transparent'}" onchange="toggleSeries('${key}',this)">${label}</label>`;
+}
+
+window.toggleSeries=function(key,el){
+  vis[key]=el.checked;
+  el.style.background=el.checked?el.style.borderColor.replace('30','30'):'transparent';
+  // If toggling a parent "All", update children
+  if(key==='lineAll'){vis.lineLatency=vis.lineQueue=vis.lineError=el.checked;document.querySelectorAll('[data-key^=line]').forEach(c=>{if(c!==el){c.checked=el.checked;c.style.background=el.checked?c.style.borderColor.replace('30','30'):'transparent';}});}
+  if(key==='areaAll'){vis.areaBili=vis.areaDouyin=vis.areaXhs=el.checked;document.querySelectorAll('[data-key^=area]').forEach(c=>{if(c!==el){c.checked=el.checked;c.style.background=el.checked?c.style.borderColor.replace('30','30'):'transparent';}});}
+  rebuildCharts();
+};
+
+function toggleAllLine(v){vis.lineAll=v;vis.lineLatency=v;vis.lineQueue=v;vis.lineError=v;document.querySelectorAll('[data-key^=line]').forEach(c=>{c.checked=v;c.style.background=v?c.style.borderColor.replace('30','30'):'transparent';});}
+function toggleAllArea(v){vis.areaAll=v;vis.areaBili=v;vis.areaDouyin=v;vis.areaXhs=v;document.querySelectorAll('[data-key^=area]').forEach(c=>{c.checked=v;c.style.background=v?c.style.borderColor.replace('30','30'):'transparent';});}
+
+function renderLayout(){
+  const grid=document.getElementById('chartGrid');
+  // Gantt
+  grid.innerHTML=`<div class="chart-card full" onclick="showGanttModal()"><h2>Request pipeline gantt (last 60s)</h2><div id="ganttContainer">${ganttTasks.map(t=>`<div class="gantt-row"><div class="gantt-label">${t.label}</div><div class="gantt-track"><div class="gantt-bar" style="width:${t.pct}%;background:${t.color}"><span>${t.ms}</span></div></div><div class="gantt-time">${t.pct}%</div></div>`).join('')}</div></div>`;
+
+  // Line chart
+  grid.innerHTML+=`<div class="chart-card" onclick="showChartModal('lineModal','Api metrics','line')"><h2>Api metrics</h2><div class="toggle-bar">${toggle('All','lineAll','#378add')}${toggle('Latency','lineLatency','#378add')}${toggle('Queue','lineQueue','#a6e3a1')}${toggle('Error','lineError','#f38ba8')}</div><div class="chart-wrap"><canvas id="chartLine" role="img" aria-label="api metrics line chart"></canvas></div></div>`;
+
+  // Area
+  grid.innerHTML+=`<div class="chart-card" onclick="showChartModal('areaModal','Message rate by platform','area')"><h2>Message rate by platform</h2><div class="toggle-bar">${toggle('All','areaAll','#378add')}${toggle('Bili','areaBili','#74c7ec')}${toggle('Douyin','areaDouyin','#a6e3a1')}${toggle('Xhs','areaXhs','#fab387')}</div><div class="chart-wrap"><canvas id="chartArea" role="img" aria-label="message rate area chart"></canvas></div></div>`;
+
+  // Doughnut
+  grid.innerHTML+=`<div class="chart-card" onclick="showChartModal('doughnutModal','Breakdown','doughnut')"><h2>Breakdown</h2><div class="toggle-bar">${toggle('All','doughnutAll','#378add')}</div><div class="chart-wrap"><canvas id="chartDoughnut" role="img" aria-label="breakdown doughnut chart"></canvas></div></div>`;
+
+  // Bar
+  grid.innerHTML+=`<div class="chart-card" onclick="showChartModal('barModal','Workers & threads','bar')"><h2>Workers & threads</h2><div class="toggle-bar">${toggle('All','barAll','#378add')}</div><div class="chart-wrap"><canvas id="chartBar" role="img" aria-label="worker thread bar chart"></canvas></div></div>`;
+}
+
+let charts={};
+function rebuildCharts(){
+  Object.values(charts).forEach(c=>c&&c.destroy());charts={};
+  const s=SCHEMES[curScheme],dark=isChartDark();
+  Chart.defaults.color=chartText();Chart.defaults.borderColor=chartGrid();
+
+  const baseOpts=(extra)=>({responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{color:'rgba(0,0,0,0)',drawBorder:false},ticks:{maxRotation:0,color:chartText(),font:{size:10}}},y:{grid:{color:chartGrid(),drawBorder:false},ticks:{color:chartText(),font:{size:10}}}},...extra});
+
+  // Line
+  const lineSets=[];
+  if(vis.lineLatency)lineSets.push({label:'Latency',data:lineD1,borderColor:'#378add',backgroundColor:'rgba(55,138,221,0.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2});
+  if(vis.lineQueue)lineSets.push({label:'Queue depth',data:lineD2,borderColor:'#a6e3a1',backgroundColor:'rgba(166,227,161,0.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2});
+  if(vis.lineError)lineSets.push({label:'Error rate',data:lineD3,borderColor:'#f38ba8',backgroundColor:'rgba(243,139,168,0.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2,borderDash:[3,3]});
+  charts.line=new Chart(document.getElementById('chartLine'),{type:'line',data:{labels,datasets:lineSets},options:baseOpts()});
+
+  // Area
+  const areaSets=[];
+  if(vis.areaBili)areaSets.push({label:'Bili',data:areaD1,borderColor:'#74c7ec',backgroundColor:'rgba(116,199,236,0.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2});
+  if(vis.areaDouyin)areaSets.push({label:'Douyin',data:areaD2,borderColor:'#a6e3a1',backgroundColor:'rgba(166,227,161,0.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2});
+  if(vis.areaXhs)areaSets.push({label:'Xhs',data:areaD3,borderColor:'#fab387',backgroundColor:'rgba(250,179,135,0.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2});
+  charts.area=new Chart(document.getElementById('chartArea'),{type:'line',data:{labels,datasets:areaSets},options:baseOpts()});
+
+  // Doughnut
+  const doughData=[35,20,25,12,8];
+  const dsLabels=['Api call','Db write','Ai inference','Ws recv','Other'];
+  const dsColors=[s.primary,'#74c7ec','#a6e3a1','#fab387',dark?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.06)'];
+  const filteredDough={labels:[],data:[],bg:[]};
+  dsLabels.forEach((l,i)=>{if(vis.doughnutAll){filteredDough.labels.push(l);filteredDough.data.push(doughData[i]);filteredDough.bg.push(dsColors[i]);}});
+  charts.doughnut=new Chart(document.getElementById('chartDoughnut'),{
+    type:'doughnut',
+    data:{labels:filteredDough.labels,datasets:[{data:filteredDough.data,backgroundColor:filteredDough.bg,borderWidth:0}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.parsed+' requests'}}},cutout:'65%'},
+    plugins:[{id:'centerText',beforeDraw(c){const{width,height,ctx}=c;const total=filteredDough.data.reduce((a,b)=>a+b,0);ctx.save();ctx.fillStyle=dark?'rgba(255,255,255,0.8)':'rgba(0,0,0,0.8)';ctx.font='600 22px -apple-system, sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(total,width/2,height/2-6);ctx.fillStyle=dark?'rgba(255,255,255,0.3)':'rgba(0,0,0,0.3)';ctx.font='11px -apple-system, sans-serif';ctx.fillText('Total requests',width/2,height/2+14);ctx.restore()}}],
+  });
+
+  // Bar
+  const barLabels=['Python','Go ws','Sched','DB pool','Bili','XHS','KS'];
+  const barData=[4,3,2,4,2,1,1];
+  const filteredBar={labels:[],data:[],bg:[],bc:[]};
+  barLabels.forEach((l,i)=>{if(vis.barAll){filteredBar.labels.push(l);filteredBar.data.push(barData[i]);filteredBar.bg.push(BAR_COLORS[i]+'20');filteredBar.bc.push(BAR_COLORS[i]);}});
+  charts.bar=new Chart(document.getElementById('chartBar'),{
+    type:'bar',
+    data:{labels:filteredBar.labels,datasets:[{label:'Threads',data:filteredBar.data,backgroundColor:filteredBar.bg,borderColor:filteredBar.bc,borderWidth:1.5,borderRadius:3}]},
+    options:baseOpts({scales:{y:{beginAtZero:true,grid:{color:chartGrid(),drawBorder:false}}}}),
+  });
+}
+
+function showGanttModal(){
+  const overlay=document.getElementById('chartModal');
+  document.getElementById('modalTitle').textContent='Request pipeline gantt';overlay.classList.add('open');
+  setTimeout(()=>{
+    const canvas=document.getElementById('modalCanvas');const cont=canvas.parentElement;
+    const w=cont.clientWidth,h=cont.clientHeight;
+    canvas.width=w*2;canvas.height=h*2;canvas.style.width=w+'px';canvas.style.height=h+'px';
+    const ctx=canvas.getContext('2d');ctx.scale(2,2);
+    const dark=isChartDark();
+    ctx.fillStyle=dark?'#111216':'rgba(255,255,255,0)';ctx.fillRect(0,0,w,h);
+    const rowH=Math.floor((h-30)/5);
+    ctx.font='13px -apple-system, sans-serif';
+    ganttTasks.forEach((t,i)=>{
+      const y=24+i*rowH+4;
+      ctx.fillStyle='rgba(255,255,255,0.5)';ctx.textAlign='left';ctx.fillText(t.label,16,y+10);
+      const bx=150,bw=w-bx-80,bh=24;
+      ctx.fillStyle=dark?'rgba(255,255,255,0.03)':'rgba(0,0,0,0.03)';
+      ctx.beginPath();ctx.roundRect?ctx.roundRect(bx,y-2,bw,bh,5):ctx.rect(bx,y-2,bw,bh);ctx.fill();
+      ctx.fillStyle=t.color;
+      ctx.beginPath();ctx.roundRect?ctx.roundRect(bx,y-2,bw*t.pct/100,bh,5):ctx.rect(bx,y-2,bw*t.pct/100,bh);ctx.fill();
+      ctx.fillStyle='rgba(255,255,255,0.85)';ctx.textAlign='right';ctx.fillText(t.ms,bx+bw*t.pct/100-10,y+10);
+      ctx.fillStyle='rgba(255,255,255,0.25)';ctx.textAlign='right';ctx.fillText(t.pct+'%',w-12,y+10);
+    });
+  },50);
+}
+
+function showChartModal(id,title,type){
+  const overlay=document.getElementById('chartModal');
+  document.getElementById('modalTitle').textContent=title;overlay.classList.add('open');
+  setTimeout(()=>{
+    if(modalChart)modalChart.destroy();
+    const canvas=document.getElementById('modalCanvas');const s=SCHEMES[curScheme],dark=isChartDark();
+    if(type==='doughnut'){
+      const doughData=[35,20,25,12,8];const dsLabels=['Api call','Db write','Ai inference','Ws recv','Other'];
+      const dsColors=[s.primary,'#74c7ec','#a6e3a1','#fab387',dark?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.06)'];
+      modalChart=new Chart(canvas,{type:'doughnut',data:{labels:dsLabels,datasets:[{data:doughData,backgroundColor:dsColors,borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>ctx.label+': '+ctx.parsed+' requests'}}},cutout:'65%'}});
+    }else if(type==='bar'){
+      modalChart=new Chart(canvas,{type:'bar',data:{labels:['Python','Go ws','Sched','DB pool','Bili','XHS','KS'],datasets:[{label:'Threads',data:[4,3,2,4,2,1,1],backgroundColor:BAR_COLORS.map(c=>c+'30'),borderColor:BAR_COLORS,borderWidth:2,borderRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,grid:{color:chartGrid(),drawBorder:false}},x:{grid:{display:false}}}}});
+    }else if(type==='area'){
+      modalChart=new Chart(canvas,{type:'line',data:{labels,datasets:[{label:'Bili',data:areaD1,borderColor:'#74c7ec',backgroundColor:'rgba(116,199,236,0.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2},{label:'Douyin',data:areaD2,borderColor:'#a6e3a1',backgroundColor:'rgba(166,227,161,0.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2},{label:'Xhs',data:areaD3,borderColor:'#fab387',backgroundColor:'rgba(250,179,135,0.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{grid:{color:chartGrid(),drawBorder:false}}}}});
+    }else{
+      modalChart=new Chart(canvas,{type:'line',data:{labels,datasets:[{label:'Latency',data:lineD1,borderColor:s.primary,backgroundColor:s.dim,fill:true,tension:.3,pointRadius:0,borderWidth:2},{label:'Queue depth',data:lineD2,borderColor:'#a6e3a1',backgroundColor:'rgba(166,227,161,0.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2},{label:'Error rate',data:lineD3,borderColor:'#f38ba8',backgroundColor:'rgba(243,139,168,0.08)',fill:true,tension:.3,pointRadius:0,borderWidth:2,borderDash:[3,3]}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{grid:{color:chartGrid(),drawBorder:false}}}}});
+    }
+  },50);
+}
+
+document.getElementById('modalClose').onclick=()=>{document.getElementById('chartModal').classList.remove('open');if(modalChart){modalChart.destroy();modalChart=null}};
+document.getElementById('chartModal').onclick=(e)=>{if(e.target===e.currentTarget){document.getElementById('chartModal').classList.remove('open');if(modalChart){modalChart.destroy();modalChart=null}}};
+
+document.querySelector('.toolbar').addEventListener('click',(e)=>{
+  const btn=e.target.closest('button');if(!btn)return;
+  if(btn.classList.contains('scheme-btn')){
+    document.querySelectorAll('.scheme-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');curScheme=btn.dataset.scheme;rebuildCharts();
+  }else if(btn.classList.contains('theme-btn')){
+    document.querySelectorAll('.theme-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');curTheme=btn.dataset['theme'];rebuildCharts();
+  }
+});
+
+renderMetrics();renderLayout();setTimeout(rebuildCharts,50);
+
+setInterval(()=>{
+  lineD1.shift();lineD1.push(Math.max(0,lineD1[lineD1.length-1]+(Math.random()-0.5)*50));
+  lineD2.shift();lineD2.push(Math.max(0,lineD2[lineD2.length-1]+(Math.random()-0.5)*20));
+  lineD3.shift();lineD3.push(Math.max(0,lineD3[lineD3.length-1]+(Math.random()-0.5)*10));
+  areaD1.shift();areaD1.push(Math.max(0,areaD1[areaD1.length-1]+(Math.random()-0.5)*3));
+  areaD2.shift();areaD2.push(Math.max(0,areaD2[areaD2.length-1]+(Math.random()-0.5)*2));
+  areaD3.shift();areaD3.push(Math.max(0,areaD3[areaD3.length-1]+(Math.random()-0.5)*1.5));
+  labels.push((parseInt(labels[labels.length-1])+2)+'s');labels.shift();
+  rebuildCharts();
+},3000);
+</script>

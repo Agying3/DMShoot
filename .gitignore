@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Virtual env
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# ── 敏感数据（绝不提交）──
+
+# 数据库
+dmshoot/data/*.db
+dmshoot/data/*.db-*
+*.db-shm
+*.db-wal
+
+# Cookie / Token / API 数据
+dmshoot/data/cache/
+dmshoot/data/*.b64
+dmshoot/data/*_cookie.*
+dmshoot/data/*_state.*
+dmshoot/data/*_debug.txt
+dmshoot/data/*_probe.*
+dmshoot/data/*_captured.*
+dmshoot/data/startup_log.*
+*.bin
+dmshoot-go/
+
+# AI 角色提示词
+prompts/
+
+# 小红书逆向签名
+dmshoot/plugins/xiaohongshu/static/
+
+# ── 日志 ──
+*.log
+logs/
+
+# ── 工具 / 逆向（绝不提交）──
+scripts/
+external/
+tools/
+
+# ── 截图 / 报告 ──
+screenshot*.png
+docs/test_screenshots/
+reports/
+
+# ── 编译产物 ──
+*.exe
+*.exe~
+*.pdb
+
+# ── Node.js ──
+node_modules/
+package-lock.json
+
+# ── 杂项 ──
+$null
+bg.jpg
+nul
+null/
+push*.txt
+push_out*.txt

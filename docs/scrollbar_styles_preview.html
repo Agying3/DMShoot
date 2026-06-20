@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>通讯录滚动条样式预览 — DMShoot</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif;
+    background: #1a1a2e; color: #cdd6f4;
+    padding: 30px; min-height: 100vh;
+  }
+  h1 { color: #cba6f7; margin-bottom: 8px; font-size: 22px; }
+  .sub { color: #6c7086; margin-bottom: 28px; font-size: 13px; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 24px;
+  }
+  .card {
+    background: #1e1e2e; border: 1px solid #313244;
+    border-radius: 12px; overflow: hidden;
+  }
+  .card-header {
+    background: #313244; padding: 10px 16px;
+    font-size: 13px; color: #89b4fa; font-weight: bold;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .card-header .badge {
+    font-size: 10px; padding: 2px 8px; border-radius: 10px;
+    background: rgba(166,227,161,0.15); color: #a6e3a1;
+  }
+  .card-body {
+    padding: 16px; display: flex; gap: 12px;
+    height: 320px;
+  }
+  /* --- 模拟左侧通讯录 --- */
+  .contact-preview {
+    width: 200px; min-width: 200px;
+    background: #11111b; border-radius: 8px;
+    overflow: hidden; display: flex; flex-direction: column;
+  }
+  .contact-title {
+    padding: 8px 12px; font-size: 11px; color: #6c7086;
+    border-bottom: 1px solid #1e1e2e;
+  }
+  .contact-list {
+    flex: 1; overflow-y: auto; padding: 4px 0;
+    /* scrollbar styles set per variant below */ 
+  }
+  .contact-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; cursor: pointer;
+    transition: background 0.15s;
+  }
+  .contact-item:hover { background: rgba(255,255,255,0.05); }
+  .contact-item.active { background: rgba(137,180,250,0.1); }
+  .avatar {
+    width: 32px; height: 32px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .info { flex: 1; min-width: 0; }
+  .info .name { font-size: 13px; color: #cdd6f4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .info .last { font-size: 11px; color: #6c7086; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .time { font-size: 10px; color: #585b70; flex-shrink: 0; }
+
+  /* === 变体 1: 默认细线 === */
+  .v1 .contact-list::-webkit-scrollbar { width: 5px; }
+  .v1 .contact-list::-webkit-scrollbar-track { background: transparent; }
+  .v1 .contact-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+  .v1 .contact-list::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+  /* === 变体 2: 悬停才出现 === */
+  .v2 .contact-list::-webkit-scrollbar { width: 4px; opacity: 0; }
+  .v2 .contact-list::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; transition: background 0.3s; }
+  .v2 .contact-list:hover::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); }
+  .v2 .contact-list:hover::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+
+  /* === 变体 3: 圆点指示器 === */
+  .v3 .contact-list::-webkit-scrollbar { width: 6px; }
+  .v3 .contact-list::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
+  .v3 .contact-list::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #cba6f7, #89b4fa); border-radius: 3px; }
+
+  /* === 变体 4: 极简圆角块 === */
+  .v4 .contact-list::-webkit-scrollbar { width: 6px; }
+  .v4 .contact-list::-webkit-scrollbar-track { background: rgba(255,255,255,0.02); border-radius: 3px; }
+  .v4 .contact-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
+  .v4 .contact-list::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.14); }
+
+  /* === 变体 5: 细线无轨道 === */
+  .v5 .contact-list::-webkit-scrollbar { width: 3px; }
+  .v5 .contact-list::-webkit-scrollbar-track { background: transparent; }
+  .v5 .contact-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 2px; }
+  .v5 .contact-list::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.12); }
+
+  /* === 变体 6: 平台色主题 === */
+  .v6 .contact-list::-webkit-scrollbar { width: 5px; }
+  .v6 .contact-list::-webkit-scrollbar-track { background: transparent; }
+  .v6 .contact-list::-webkit-scrollbar-thumb { background: rgba(245,194,231,0.2); border-radius: 3px; }
+  .v6 .contact-list::-webkit-scrollbar-thumb:hover { background: rgba(245,194,231,0.35); }
+
+  /* Firefox */
+  .v1 .contact-list { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.1) transparent; }
+  .v2 .contact-list { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+  .v2 .contact-list:hover { scrollbar-color: rgba(255,255,255,0.15) transparent; }
+  .v3 .contact-list { scrollbar-width: thin; scrollbar-color: #cba6f7 transparent; }
+  .v4 .contact-list { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.08) rgba(255,255,255,0.02); }
+  .v5 .contact-list { scrollbar-width: none; }
+  .v6 .contact-list { scrollbar-width: thin; scrollbar-color: rgba(245,194,231,0.2) transparent; }
+
+  .code-popup {
+    display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    background: #11111b; border: 1px solid #45475a; border-radius: 12px;
+    padding: 24px; z-index: 100; max-width: 600px; width: 90%;
+  }
+  .code-popup.show { display: block; }
+  .code-popup pre {
+    background: #0a0a14; padding: 14px; border-radius: 8px;
+    color: #a6e3a1; font-size: 11px; overflow-x: auto; margin: 12px 0;
+  }
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 99; }
+  .overlay.show { display: block; }
+  .btn {
+    background: rgba(137,180,250,0.1); border: 1px solid rgba(137,180,250,0.2);
+    color: #89b4fa; padding: 6px 14px; border-radius: 6px; cursor: pointer;
+    font-size: 12px; margin-top: 8px;
+  }
+  .btn:hover { background: rgba(137,180,250,0.2); }
+</style>
+</head>
+<body>
+<h1>📜 通讯录滚动条样式预览</h1>
+<p class="sub">选择你喜欢的一种，我会将其应用到 DMShoot 通讯录。每个变体都有对应的 QSS 代码（点击「查看代码」获取）。<br>
+<strong style="color:#f9e2af">注意：PySide6 中滚动条使用 QScrollBar::vertical 伪状态，与 WebKit 语法不同——最终会转换成 QSS。</strong></p>
+
+<div class="grid">
+  <div class="card v1">
+    <div class="card-header"><span>变体 1 · 默认细线</span><span class="badge">低调</span></div>
+    <div class="card-body">
+      <div class="contact-preview">
+        <div class="contact-title">通讯录 (12)</div>
+        <div class="contact-list">
+          <div class="contact-item active"><div class="avatar" style="background:#cba6f7"></div><div class="info"><div class="name">哔哩哔哩UP主</div><div class="last">你好，请问合作...</div></div><div class="time">10:32</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#89b4fa"></div><div class="info"><div class="name">动画区大佬</div><div class="last">感谢支持！</div></div><div class="time">09:15</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#a6e3a1"></div><div class="info"><div class="name">游戏玩家小王</div><div class="last">一起来玩吗</div></div><div class="time">昨天</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#f9e2af"></div><div class="info"><div class="name">音乐制作人</div><div class="last">demo发你了</div></div><div class="time">昨天</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#f38ba8"></div><div class="info"><div class="name">影视剪辑师</div><div class="last">剪好了看看</div></div><div class="time">周一</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#94e2d5"></div><div class="info"><div class="name">美食博主阿欢</div><div class="last">新菜谱更新啦</div></div><div class="time">周一</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#b4befe"></div><div class="info"><div class="name">化妆品达人</div><div class="last">618活动清单</div></div><div class="time">上周</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#fab387"></div><div class="info"><div class="name">数码评测</div><div class="last">新品发布测评</div></div><div class="time">上周</div></div>
+        </div>
+      </div>
+      <div style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; color:#6c7086; font-size:12px;">
+        <p>始终可见的 5px 滚动条</p>
+        <p style="margin-top:4px">半透明白底滑块</p>
+        <p style="margin-top:4px">轨迹完全透明</p>
+        <p style="margin-top:4px">最不引人注目</p>
+        <button class="btn" onclick="showCode('v1')">查看 QSS 代码</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card v2">
+    <div class="card-header"><span>变体 2 · 悬停浮现</span><span class="badge">极简</span></div>
+    <div class="card-body">
+      <div class="contact-preview">
+        <div class="contact-title">通讯录 (12)</div>
+        <div class="contact-list">
+          <div class="contact-item active"><div class="avatar" style="background:#cba6f7"></div><div class="info"><div class="name">哔哩哔哩UP主</div><div class="last">你好，请问合作...</div></div><div class="time">10:32</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#89b4fa"></div><div class="info"><div class="name">动画区大佬</div><div class="last">感谢支持！</div></div><div class="time">09:15</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#a6e3a1"></div><div class="info"><div class="name">游戏玩家小王</div><div class="last">一起来玩吗</div></div><div class="time">昨天</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#f9e2af"></div><div class="info"><div class="name">音乐制作人</div><div class="last">demo发你了</div></div><div class="time">昨天</div></div>
+        </div>
+      </div>
+      <div style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; color:#6c7086; font-size:12px;">
+        <p>默认隐藏滚动条</p>
+        <p style="margin-top:4px">鼠标悬停时淡入</p>
+        <p style="margin-top:4px">4px 极细滑块</p>
+        <p style="margin-top:4px">最干净，需要时才有</p>
+        <p style="margin-top:6px; color:#f9e2af; font-size:10px;">⚠️ QSS不支持hover显示/隐藏</p>
+        <p style="margin-top:2px; color:#f9e2af; font-size:10px;">需用eventFilter实现</p>
+        <button class="btn" onclick="showCode('v2')">查看 QSS 代码</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card v3">
+    <div class="card-header"><span>变体 3 · 渐变色指示</span><span class="badge" style="background:rgba(203,166,247,0.15);color:#cba6f7">个性</span></div>
+    <div class="card-body">
+      <div class="contact-preview">
+        <div class="contact-title">通讯录 (12)</div>
+        <div class="contact-list">
+          <div class="contact-item active"><div class="avatar" style="background:#cba6f7"></div><div class="info"><div class="name">哔哩哔哩UP主</div><div class="last">你好，请问合作...</div></div><div class="time">10:32</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#89b4fa"></div><div class="info"><div class="name">动画区大佬</div><div class="last">感谢支持！</div></div><div class="time">09:15</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#a6e3a1"></div><div class="info"><div class="name">游戏玩家小王</div><div class="last">一起来玩吗</div></div><div class="time">昨天</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#f9e2af"></div><div class="info"><div class="name">音乐制作人</div><div class="last">demo发你了</div></div><div class="time">昨天</div></div>
+        </div>
+      </div>
+      <div style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; color:#6c7086; font-size:12px;">
+        <p>6px 紫色→蓝色渐变滑块</p>
+        <p style="margin-top:4px">匹配 DMShoot 品牌色</p>
+        <p style="margin-top:4px">透明轨迹，圆角 3px</p>
+        <p style="margin-top:4px">有人注意，但好看</p>
+        <button class="btn" onclick="showCode('v3')">查看 QSS 代码</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card v4">
+    <div class="card-header"><span>变体 4 · 微光轨道</span><span class="badge">干净</span></div>
+    <div class="card-body">
+      <div class="contact-preview">
+        <div class="contact-title">通讯录 (12)</div>
+        <div class="contact-list">
+          <div class="contact-item active"><div class="avatar" style="background:#cba6f7"></div><div class="info"><div class="name">哔哩哔哩UP主</div><div class="last">你好，请问合作...</div></div><div class="time">10:32</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#89b4fa"></div><div class="info"><div class="name">动画区大佬</div><div class="last">感谢支持！</div></div><div class="time">09:15</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#a6e3a1"></div><div class="info"><div class="name">游戏玩家小王</div><div class="last">一起来玩吗</div></div><div class="time">昨天</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#f9e2af"></div><div class="info"><div class="name">音乐制作人</div><div class="last">demo发你了</div></div><div class="time">昨天</div></div>
+        </div>
+      </div>
+      <div style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; color:#6c7086; font-size:12px;">
+        <p>6px 圆角块状滑块</p>
+        <p style="margin-top:4px">轨道有极浅底色</p>
+        <p style="margin-top:4px">hover 亮度提升</p>
+        <p style="margin-top:4px">经典桌面应用风格</p>
+        <button class="btn" onclick="showCode('v4')">查看 QSS 代码</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card v5">
+    <div class="card-header"><span>变体 5 · 超细隐藏</span><span class="badge" style="background:rgba(243,139,168,0.15);color:#f38ba8">隐藏</span></div>
+    <div class="card-body">
+      <div class="contact-preview">
+        <div class="contact-title">通讯录 (12)</div>
+        <div class="contact-list">
+          <div class="contact-item active"><div class="avatar" style="background:#cba6f7"></div><div class="info"><div class="name">哔哩哔哩UP主</div><div class="last">你好，请问合作...</div></div><div class="time">10:32</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#89b4fa"></div><div class="info"><div class="name">动画区大佬</div><div class="last">感谢支持！</div></div><div class="time">09:15</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#a6e3a1"></div><div class="info"><div class="name">游戏玩家小王</div><div class="last">一起来玩吗</div></div><div class="time">昨天</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#f9e2af"></div><div class="info"><div class="name">音乐制作人</div><div class="last">demo发你了</div></div><div class="time">昨天</div></div>
+        </div>
+      </div>
+      <div style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; color:#6c7086; font-size:12px;">
+        <p>3px 极细几乎看不见</p>
+        <p style="margin-top:4px">鼠标滚轮正常滚动</p>
+        <p style="margin-top:4px">hover 微微可见</p>
+        <p style="margin-top:4px">适合不需要拖动条的</p>
+        <button class="btn" onclick="showCode('v5')">查看 QSS 代码</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card v6">
+    <div class="card-header"><span>变体 6 · 粉色点缀</span><span class="badge" style="background:rgba(245,194,231,0.15);color:#f5c2e7">柔和</span></div>
+    <div class="card-body">
+      <div class="contact-preview">
+        <div class="contact-title">通讯录 (12)</div>
+        <div class="contact-list">
+          <div class="contact-item active"><div class="avatar" style="background:#cba6f7"></div><div class="info"><div class="name">哔哩哔哩UP主</div><div class="last">你好，请问合作...</div></div><div class="time">10:32</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#89b4fa"></div><div class="info"><div class="name">动画区大佬</div><div class="last">感谢支持！</div></div><div class="time">09:15</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#a6e3a1"></div><div class="info"><div class="name">游戏玩家小王</div><div class="last">一起来玩吗</div></div><div class="time">昨天</div></div>
+          <div class="contact-item"><div class="avatar" style="background:#f9e2af"></div><div class="info"><div class="name">音乐制作人</div><div class="last">demo发你了</div></div><div class="time">昨天</div></div>
+        </div>
+      </div>
+      <div style="flex:1; display:flex; flex-direction:column; justify-content:center; align-items:center; color:#6c7086; font-size:12px;">
+        <p>5px 淡粉色半透明滑块</p>
+        <p style="margin-top:4px">温暖柔和的视觉感受</p>
+        <p style="margin-top:4px">hover 饱和度提升</p>
+        <p style="margin-top:4px">与深色主题协调</p>
+        <button class="btn" onclick="showCode('v6')">查看 QSS 代码</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay" onclick="closeCode()"></div>
+<div class="code-popup" id="popup">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+    <span style="color:#cba6f7;font-size:14px;font-weight:bold;" id="popup-title">QSS 代码</span>
+    <span onclick="closeCode()" style="cursor:pointer;color:#6c7086;font-size:18px;">&#x2715;</span>
+  </div>
+  <pre id="popup-code"></pre>
+  <p style="color:#6c7086;font-size:11px;margin-top:8px;">
+    复制这段 QSS，在 ContactList 的 __init__ 中 setStyleSheet 使用。
+    或写入 dmshoot/resources/style.qss 全局主题文件。
+  </p>
+</div>
+
+<script>
+const codes = {
+  v1: `/* 变体1: 默认细线 */
+QListWidget {
+    border: none;
+    background: transparent;
+}
+QScrollBar:vertical {
+    width: 5px;
+    background: transparent;
+}
+QScrollBar::handle:vertical {
+    background: rgba(255,255,255,0.10);
+    border-radius: 3px;
+    min-height: 30px;
+}
+QScrollBar::handle:vertical:hover {
+    background: rgba(255,255,255,0.20);
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}`,
+
+  v2: `/* 变体2: 悬停浮现（需 eventFilter） */
+QListWidget {
+    border: none;
+    background: transparent;
+}
+QScrollBar:vertical {
+    width: 4px;
+    background: transparent;
+}
+QScrollBar::handle:vertical {
+    background: transparent;
+    border-radius: 2px;
+}
+QScrollBar::handle:vertical:hover {
+    background: rgba(255,255,255,0.15);
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+/* ⚠️ PySide6 QSS 不支持 :hover 伪类触发显示/隐藏。 
+   需要额外在 python 中用 eventFilter 监听 
+   Enter/Leave 事件切换透明度。 */`,
+
+  v3: `/* 变体3: 渐变色指示 */
+QListWidget {
+    border: none;
+    background: transparent;
+}
+QScrollBar:vertical {
+    width: 6px;
+    background: transparent;
+    margin: 4px 0;
+}
+QScrollBar::handle:vertical {
+    background: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 rgba(203,166,247,200),
+        stop:1 rgba(137,180,250,200)
+    );
+    border-radius: 3px;
+    min-height: 30px;
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}`,
+
+  v4: `/* 变体4: 微光轨道 */
+QListWidget {
+    border: none;
+    background: transparent;
+}
+QScrollBar:vertical {
+    width: 6px;
+    background: rgba(255,255,255,0.02);
+    border-radius: 3px;
+}
+QScrollBar::handle:vertical {
+    background: rgba(255,255,255,0.08);
+    border-radius: 3px;
+    min-height: 30px;
+}
+QScrollBar::handle:vertical:hover {
+    background: rgba(255,255,255,0.14);
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}`,
+
+  v5: `/* 变体5: 超细隐藏 */
+QListWidget {
+    border: none;
+    background: transparent;
+}
+QScrollBar:vertical {
+    width: 3px;
+    background: transparent;
+}
+QScrollBar::handle:vertical {
+    background: rgba(255,255,255,0.06);
+    border-radius: 2px;
+    min-height: 20px;
+}
+QScrollBar::handle:vertical:hover {
+    background: rgba(255,255,255,0.12);
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}`,
+
+  v6: `/* 变体6: 粉色点缀 */
+QListWidget {
+    border: none;
+    background: transparent;
+}
+QScrollBar:vertical {
+    width: 5px;
+    background: transparent;
+}
+QScrollBar::handle:vertical {
+    background: rgba(245,194,231,80);
+    border-radius: 3px;
+    min-height: 30px;
+}
+QScrollBar::handle:vertical:hover {
+    background: rgba(245,194,231,140);
+}
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}`,
+};
+
+function showCode(v) {
+  document.getElementById('popup-title').textContent = '变体' + v.replace('v','') + ' · QSS 代码';
+  document.getElementById('popup-code').textContent = codes[v];
+  document.getElementById('popup').classList.add('show');
+  document.getElementById('overlay').classList.add('show');
+}
+function closeCode() {
+  document.getElementById('popup').classList.remove('show');
+  document.getElementById('overlay').classList.remove('show');
+}
+</script>
+</body>
+</html>
