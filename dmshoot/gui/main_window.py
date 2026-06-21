@@ -653,9 +653,16 @@ class MainWindow(QMainWindow):
         self.page_deepseek.set_status("连接中...")
         self.page_deepseek.set_status_color("")
 
-        # 异步测试连接
-        loop = asyncio.get_event_loop()
-        loop.create_task(self._test_ai_connection())
+        # 异步测试连接 — 用 QThread 避免阻塞 UI
+        import threading
+        threading.Thread(target=self._run_test_ai, daemon=True).start()
+
+    def _run_test_ai(self):
+        """在后台线程运行 asyncio 测试连接"""
+        try:
+            asyncio.run(self._test_ai_connection())
+        except Exception:
+            pass
 
     async def _test_ai_connection(self):
         """实际测试 API 连接"""

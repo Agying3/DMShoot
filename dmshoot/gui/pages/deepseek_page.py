@@ -2,9 +2,9 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QLineEdit,
-    QPushButton, QLabel, QHBoxLayout, QFrame, QApplication
+    QPushButton, QLabel, QHBoxLayout, QFrame
 )
-from PySide6.QtCore import Signal, Qt, QPoint, QRect, QSize, QMetaObject, QueuedConnection
+from PySide6.QtCore import Signal, Qt, QPoint, QRect, QSize
 from PySide6.QtGui import QRegion, QPainterPath
 
 MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"]
