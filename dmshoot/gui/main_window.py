@@ -391,6 +391,9 @@ class MarkdownViewer(QDialog):
 # ── 主窗口 ──
 
 class MainWindow(QMainWindow):
+    # AI 连接测试结果信号（跨线程安全）
+    _ai_test_result = QtSignal(bool, str)  # (成功, 消息)
+
     def __init__(self):
         super().__init__()
         self.bus = MessageBus.instance()
@@ -423,6 +426,8 @@ class MainWindow(QMainWindow):
             self.page_login, self.stack, self._adapter_mgr)
 
         SignalWiring.connect_all(self, self._adapter_mgr, self._auth_ctrl)
+        # AI 连接测试结果信号（跨线程安全）
+        self._ai_test_result.connect(self._on_ai_test_result)
         logger.info("_connect_signals 完成")
         self._sync_config_to_ui()
         logger.info("_sync_config_to_ui 完成")
@@ -653,7 +658,7 @@ class MainWindow(QMainWindow):
         self.page_deepseek.set_status("连接中...")
         self.page_deepseek.set_status_color("")
 
-        # 异步测试连接 — 用 QThread 避免阻塞 UI
+        # 异步测试连接 — 后台线程 + Signal 跨线程刷新 UI
         import threading
         threading.Thread(target=self._run_test_ai, daemon=True).start()
 
@@ -661,32 +666,29 @@ class MainWindow(QMainWindow):
         """在后台线程运行 asyncio 测试连接"""
         try:
             asyncio.run(self._test_ai_connection())
-        except Exception:
-            pass
+        except Exception as e:
+            self._ai_test_result.emit(False, f"连接失败: {e}")
 
     async def _test_ai_connection(self):
-        """实际测试 API 连接"""
+        """实际测试 API 连接，通过 Signal 通知主线程更新 UI"""
         try:
             init_ai(self.config.api_key, self._get_prompt(), self.config.model, self._get_behavior_prompt())
             get_ai().set_persona(self.config.prompt_preset)
             ok, err = await get_ai().test_connection()
-            if ok:
-                # 切回主线程刷新 UI，避免 asyncio task 不在 Qt 主线程的问题
-                QTimer.singleShot(0, lambda: self._update_ai_status_success())
-            else:
-                QTimer.singleShot(0, lambda: self._update_ai_status_fail(err))
+            self._ai_test_result.emit(ok, err if err else "")
         except Exception as e:
-            QTimer.singleShot(0, lambda: self._update_ai_status_fail(f"连接失败: {e}"))
+            self._ai_test_result.emit(False, f"连接失败: {e}")
 
-    def _update_ai_status_success(self):
-        self.page_deepseek.set_status(f"已连接 {self.config.model}")
-        self.page_deepseek.set_status_color("green")
-        self.sidebar.update_ai_status("●")
-
-    def _update_ai_status_fail(self, msg: str):
-        self.page_deepseek.set_status(msg)
-        self.page_deepseek.set_status_color("red")
-        self.sidebar.update_ai_status("○")
+    def _on_ai_test_result(self, ok: bool, msg: str):
+        """Signal 槽：在 Qt 主线程安全地更新 AI 状态 UI"""
+        if ok:
+            self.page_deepseek.set_status(f"已连接 {self.config.model}")
+            self.page_deepseek.set_status_color("green")
+            self.sidebar.update_ai_status("●")
+        else:
+            self.page_deepseek.set_status(msg or "连接失败")
+            self.page_deepseek.set_status_color("red")
+            self.sidebar.update_ai_status("○")
 
     def _on_prompt_change(self, name: str):
         """角色提示词切换 — 保存配置 + 更新 AI 角色名"""
