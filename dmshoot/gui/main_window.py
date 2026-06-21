@@ -664,17 +664,22 @@ class MainWindow(QMainWindow):
             get_ai().set_persona(self.config.prompt_preset)
             ok, err = await get_ai().test_connection()
             if ok:
-                self.page_deepseek.set_status(f"已连接 {self.config.model}")
-                self.page_deepseek.set_status_color("green")
-                self.sidebar.update_ai_status("●")
+                # 切回主线程刷新 UI，避免 asyncio task 不在 Qt 主线程的问题
+                QTimer.singleShot(0, lambda: self._update_ai_status_success())
             else:
-                self.page_deepseek.set_status(err)
-                self.page_deepseek.set_status_color("red")
-                self.sidebar.update_ai_status("○")
+                QTimer.singleShot(0, lambda: self._update_ai_status_fail(err))
         except Exception as e:
-            self.page_deepseek.set_status(f"连接失败: {e}")
-            self.page_deepseek.set_status_color("red")
-            self.sidebar.update_ai_status("○")
+            QTimer.singleShot(0, lambda: self._update_ai_status_fail(f"连接失败: {e}"))
+
+    def _update_ai_status_success(self):
+        self.page_deepseek.set_status(f"已连接 {self.config.model}")
+        self.page_deepseek.set_status_color("green")
+        self.sidebar.update_ai_status("●")
+
+    def _update_ai_status_fail(self, msg: str):
+        self.page_deepseek.set_status(msg)
+        self.page_deepseek.set_status_color("red")
+        self.sidebar.update_ai_status("○")
 
     def _on_prompt_change(self, name: str):
         """角色提示词切换 — 保存配置 + 更新 AI 角色名"""

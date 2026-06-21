@@ -2,9 +2,9 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QLineEdit,
-    QPushButton, QLabel, QHBoxLayout, QFrame
+    QPushButton, QLabel, QHBoxLayout, QFrame, QApplication
 )
-from PySide6.QtCore import Signal, Qt, QPoint, QRect, QSize
+from PySide6.QtCore import Signal, Qt, QPoint, QRect, QSize, QMetaObject, QueuedConnection
 from PySide6.QtGui import QRegion, QPainterPath
 
 MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"]
@@ -204,12 +204,25 @@ class DeepSeekPage(QWidget):
 
     def set_status_color(self, color: str):
         """设置状态文字颜色: green / red / (空=默认灰)"""
+        # 先清除 inline stylesheet，避免与 QSS 文件里的 #infoLabel 规则冲突
+        self.status.setStyleSheet("")
         if color == "green":
-            self.status.setStyleSheet("color: #4ADE80; font-size: 12px; background: transparent;")
+            self.status.setStyleSheet(
+                "QLabel { color: #4ADE80; font-size: 12px; background: transparent; }"
+            )
             self._connect_btn.setText("重新连接")
         elif color == "red":
-            self.status.setStyleSheet("color: #F87171; font-size: 12px; background: transparent;")
+            self.status.setStyleSheet(
+                "QLabel { color: #F87171; font-size: 12px; background: transparent; }"
+            )
             self._connect_btn.setText("重试")
         else:
-            self.status.setStyleSheet("color: rgba(255,255,255,0.70); font-size: 12px; background: transparent;")
+            self.status.setStyleSheet(
+                "QLabel { color: rgba(255,255,255,0.70); font-size: 12px; background: transparent; }"
+            )
             self._connect_btn.setText("连接")
+        # 强制 Qt 重新应用样式，确保 inline stylesheet 生效
+        if self.status.style():
+            self.status.style().unpolish(self.status)
+            self.status.style().polish(self.status)
+        self.status.update()
