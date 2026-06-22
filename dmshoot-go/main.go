@@ -27,7 +27,7 @@ type BroadcastMessage struct {
 }
 
 var (
-	dbPath = "H:/DMShoot/dmshoot/data/dmshoot.db"
+	dbPath string // 由 DMSHOOT_DB env 或自动发现决定
 	port   = ":9800"
 
 	upgrader = websocket.Upgrader{
@@ -45,17 +45,12 @@ func main() {
 	if len(os.Args) > 1 {
 		port = ":" + os.Args[1]
 	}
+
+	// DB 路径优先级: DMSHOOT_DB env > exe-relative > cwd-relative
 	if p := os.Getenv("DMSHOOT_DB"); p != "" {
 		dbPath = p
-	}
-	// 默认 DB 路径
-	exe, _ := os.Executable()
-	exeDir := filepath.Dir(exe)
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		altPath := filepath.Join(exeDir, "dmshoot.db")
-		if _, err2 := os.Stat(altPath); err2 == nil {
-			dbPath = altPath
-		}
+	} else {
+		dbPath = discoverDBPath()
 	}
 
 	// 初始化 SQLite 批量写入器
@@ -388,4 +383,27 @@ func PushCommand(cmdType string, data interface{}) {
 	case broadcast <- BroadcastMessage{Type: cmdType, Data: data}:
 	default:
 	}
+}
+
+// discoverDBPath 在无 DMSHOOT_DB env 时自动发现 SQLite 路径
+func discoverDBPath() string {
+	exe, _ := os.Executable()
+	exeDir := filepath.Dir(exe)
+	cwd, _ := os.Getwd()
+
+	// 候选路径：exe 目录下的相对路径 > 工作目录下的相对路径
+	candidates := []string{
+		filepath.Join(exeDir, "dmshoot", "data", "dmshoot.db"),
+		filepath.Join(exeDir, "data", "dmshoot.db"),
+		filepath.Join(exeDir, "dmshoot.db"),
+		filepath.Join(cwd, "dmshoot", "data", "dmshoot.db"),
+		filepath.Join(cwd, "data", "dmshoot.db"),
+		filepath.Join(cwd, "dmshoot.db"),
+	}
+	for _, p := range candidates {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "dmshoot.db" // 最后的兜底
 }

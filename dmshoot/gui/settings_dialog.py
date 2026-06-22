@@ -593,7 +593,7 @@ class SettingsDialog(QDialog):
             self._backend_status.setStyleSheet("color: #89b4fa; font-size: 11px;")
             return
         if self.config.msg_backend == "go":
-            go_bin = "H:/DMShoot/dmshoot-go/msg-service.exe"
+            go_bin = str(Path(__file__).parent.parent.parent / "dmshoot-go" / "msg-service.exe")
             if os.path.exists(go_bin):
                 # 配置选 Go、二进制存在、但未启动 → 自动启动
                 self._backend_status.setText("⚡ Go 启动中...")
@@ -621,7 +621,7 @@ class SettingsDialog(QDialog):
     def _on_switch_backend(self):
         target = self._backend_combo.currentData()
         import os
-        go_bin = "H:/DMShoot/dmshoot-go/msg-service.exe"
+        go_bin = str(Path(__file__).parent.parent.parent / "dmshoot-go" / "msg-service.exe")
         if target == "go" and not os.path.exists(go_bin):
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Go 未编译",

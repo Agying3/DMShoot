@@ -41,7 +41,7 @@ python -c "from dmshoot.core.go_bridge import get_go_bridge; get_go_bridge().sta
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `DMSHOOT_DB` | `H:/DMShoot/dmshoot/data/dmshoot.db` | SQLite 路径 |
+| `DMSHOOT_DB` | 自动发现（exe 目录 → cwd） | SQLite 路径。优先用此 env，否则按候选路径搜索 |
 
 ## API 文档
 
