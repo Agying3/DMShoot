@@ -33,13 +33,37 @@ def main():
     window.show()
 
     code = app.exec()
+    # ── 关闭后清理（MainWindow.closeEvent 已停适配器/线程池） ──
+    _safe_cleanup(window, app)
+    sys.exit(code)
+
+
+def _safe_cleanup(window, app):
+    """清理 Qt 对象 + 数据库，记录异常但不中断退出"""
+    import logging
+    logger = logging.getLogger("dmshoot.cleanup")
+
+    # 1. 销毁窗口（调度 deleteLater，让 Qt 事件循环处理）
     try:
         window.deleteLater()
     except Exception:
-        pass
+        logger.warning("窗口 deleteLater 异常", exc_info=True)
+
+    # 2. 处理待处理事件（让 deleteLater 生效）
     app.processEvents()
-    app.deleteLater()
-    sys.exit(code)
+
+    # 3. 销毁 QApplication
+    try:
+        app.deleteLater()
+    except Exception:
+        logger.warning("app deleteLater 异常", exc_info=True)
+
+    # 4. 确保 WAL checkpoint 已执行（atexit 也会触发，但显式调用更可靠）
+    try:
+        from dmshoot.storage.database import _checkpoint_on_exit
+        _checkpoint_on_exit()
+    except Exception:
+        pass  # atexit 已有兜底，此处静默
 
 
 if __name__ == "__main__":
