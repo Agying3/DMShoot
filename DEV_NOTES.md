@@ -171,7 +171,7 @@ douyin:{conversation_id}:{short_id}:{ticket}
 ### 已知限制
 - 发消息需要 `create_conversation` 先建立会话（如果之前没聊过）
 - 通知列表 API 只返回最近 ~20 条，旧会话可能不可见
-- WebSocket 实时消息待集成（SDK 有 `douyin_recv_msg.py`，需 protobuf 解码）
+- WebSocket 实时消息已集成，通过 `wss://frontier-im.douyin.com/ws/v2` 推送 → protobuf 解码 → 本地队列 → 适配器消费
 
 ## 11. 抖音 Cookie 缺失 s_v_web_id（2026-05-29 修复）
 
