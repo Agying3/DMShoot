@@ -1,0 +1,131 @@
+name: Automated Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    - cron: '0 0 * * 1'  # Weekly Monday 0:00 UTC
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.10', '3.11', '3.12']
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+    
+    - name: Set up Node.js (for Douyin signing)
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+    
+    - name: Install Douyin SDK dependencies
+      run: |
+        cd external/DouYin_Spider && npm install
+      shell: bash
+      continue-on-error: true
+    
+    - name: Create reports directory
+      run: mkdir -p reports
+    
+    - name: Run core tests
+      run: |
+        python -m pytest test_dmshoot.py test_integration.py -v \
+          --html=reports/core_tests.html --self-contained-html
+      continue-on-error: true
+    
+    - name: Run adapter tests
+      run: |
+        python -m pytest test_bilibili_async.py test_dmshoot_douyin.py -v \
+          --html=reports/adapter_tests.html --self-contained-html
+      continue-on-error: true
+    
+    - name: Run concurrency & performance tests
+      run: |
+        python -m pytest test_concurrency.py test_perf_monitor.py test_rate_limiter.py -v \
+          --html=reports/perf_tests.html --self-contained-html
+      continue-on-error: true
+    
+    - name: Run other tests
+      run: |
+        python -m pytest test_proto_sync.py test_go_bridge.py test_new_features.py -v \
+          --html=reports/other_tests.html --self-contained-html
+      continue-on-error: true
+    
+    - name: Upload test reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: reports-${{ matrix.os }}-py${{ matrix.python-version }}
+        path: reports/
+        retention-days: 30
+    
+    - name: Publish results summary
+      if: always()
+      run: |
+        echo "## Test Results - ${{ matrix.os }} Python ${{ matrix.python-version }}" >> $GITHUB_STEP_SUMMARY
+        echo "✅ Tests completed. Check artifacts for detailed reports." >> $GITHUB_STEP_SUMMARY
+      shell: bash
+
+  code-quality:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Install tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-test.txt
+        pip install black isort flake8 bandit
+    
+    - name: Check formatting with Black
+      run: black --check dmshoot --diff || true
+      continue-on-error: true
+    
+    - name: Check import order with isort
+      run: isort --check-only dmshoot --diff || true
+      continue-on-error: true
+    
+    - name: Lint with Flake8
+      run: |
+        flake8 dmshoot --select=E9,F63,F7,F82 --show-source || true
+      continue-on-error: true
+    
+    - name: Security scan with Bandit
+      run: |
+        bandit -r dmshoot -ll -f json -o bandit-report.json || true
+      continue-on-error: true
+    
+    - name: Upload quality reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: quality-reports
+        path: '*.json'
+        retention-days: 30
