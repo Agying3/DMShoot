@@ -151,16 +151,20 @@ external/DouYin_Spider/  # 第三方 SDK（仅引用其 protobuf + API 逻辑）
 └── node_modules/        # jsrsasign（npm 依赖）
 ```
 
-### 签名链路
+### 签名链路 (2026-06-22 重构)
 ```
-Python adapter → douyin_signer.py → subprocess Node.js → dy_ab.js → a_bogus/req_sign
+Python adapter → douyin_signer.py
+  ├── generate_req_sign()  → Python cryptography (纯 ECDSA, 无 Node 依赖)
+  ├── generate_ree_key()   → Python cryptography (纯公钥导出, 无 Node 依赖)
+  └── generate_a_bogus()   → subprocess Node.js → dy_ab.js (唯一需要 JS 的函数)
+                                ↑ LRU 缓存 512 条, 重复调用免开销
 ```
 
 ### JS 签名失效排查
-1. Node.js 不可用：检查 `douyin_signer.py` 的 `_NODE` 路径
-2. jsrsasign 缺失：`npm install jsrsasign` 在 external/DouYin_Spider
-3. NODE_OPTIONS 干扰：Git Bash 设置了 `--use-system-ca`，subprocess 必须显式传 `NODE_OPTIONS=""`
-4. 函数作用域：Node.js module scope vs global — 已修复在 wrapper 中用 switch-case 直接调用
+1. Node.js 不可用：检查 `douyin_signer.py` 的 `_find_node()` 自动发现逻辑
+2. jsrsasign 缺失：`npm install jsrsasign` 在 external/DouYin_Spider（仅 a_bogus 需要）
+3. NODE_OPTIONS 干扰：subprocess 显式传 `NODE_OPTIONS=""`，不受 Git Bash 影响
+4. `generate_req_sign` / `generate_ree_key` 已移植到 Python，不再依赖 Node
 
 ### session_id 格式
 ```
