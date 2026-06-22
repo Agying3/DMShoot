@@ -165,6 +165,7 @@ self.on_error(ErrorCategory.AUTH, "Cookie 已过期")
 
 ### 环境要求
 - Python 3.10+
+- Node.js 18+（抖音/B站/小红书签名需要）
 - Go 1.21+（可选，仅 msg-service 需要）
 
 ### 安装

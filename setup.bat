@@ -17,8 +17,28 @@ echo [OK] Python ready
 
 node --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [WARN] Node.js not found (optional, for XHS only)
+    echo [ERROR] Node.js not found - required for DouYin/XHS signing
+    pause
+    exit /b 1
 )
+echo [OK] Node.js ready
+
+echo [*] Checking DouYin_Spider...
+if not exist "external\DouYin_Spider\.git" (
+    echo [*] Cloning DouYin_Spider SDK...
+    if not exist "external" mkdir external
+    git clone --depth 1 https://github.com/Agying3/DouYin_Spider.git external\DouYin_Spider
+    if %errorlevel% neq 0 (
+        echo [WARN] Clone failed. Manually clone to external/DouYin_Spider
+    )
+)
+echo [OK] DouYin_Spider ready
+
+echo [*] Installing Node.js dependencies (jsrsasign)...
+cd /d external\DouYin_Spider
+call npm install jsrsasign
+cd /d %~dp0
+echo [OK] jsrsasign installed
 
 if not exist ".venv" (
     echo [*] Creating venv...
