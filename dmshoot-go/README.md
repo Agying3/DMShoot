@@ -89,7 +89,18 @@ python -c "from dmshoot.core.go_bridge import get_go_bridge; get_go_bridge().sta
 
 ## 待实现
 
-- [ ] 抖音平台 worker (需逆向协议)
-- [ ] B站平台 worker (bilibili-api Go 版)
-- [ ] 消息去重 (conversation_id + msg_index)
-- [ ] 用户信息缓存 (name + avatar)
+> **注意**: 平台协议层（抖音 protobuf、B站 API）由 Python 适配器处理，
+> Go 服务负责基础设施（DB 批量写入、WS 中继）。以下 Go 侧 worker 非必需。
+
+- [ ] 抖音平台 worker — Python `DouyinAdapter` 已通过 WebSocket + protobuf 完整实现
+- [ ] B站平台 worker — Python `BilibiliAdapter` 已通过 asyncio 并发轮询完整实现
+- [ ] 消息去重 — Python 端双防线（DB UNIQUE + 内存 set）已覆盖
+- [ ] 用户信息缓存 — Python 端 `peer_cache` 已实现
+
+**当前 Go 服务实际职责**:
+| 能力 | 实现方式 |
+|------|---------|
+| SQLite 批量写入 | `BatchWriter` — 合并写入减少 DB 锁竞争 |
+| WebSocket 实时广播 | 多客户端消息推送 |
+| HTTP DB API | 消息/会话 CRUD 代理 |
+| WAL checkpoint | 优雅关闭前自动触发 |
