@@ -45,20 +45,31 @@ echo [3/6] Checking DouYin_Spider...
 if not exist "external\DouYin_Spider\.git" (
     echo [*] Cloning...
     if not exist "external" mkdir external
-    git clone --depth 1 https://github.com/Agying3/DouYin_Spider.git external\DouYin_Spider
+    git clone --depth 1 https://github.com/Agying3/DouYin_Spider.git external\DouYin_Spider 2>nul
+    if errorlevel 1 (
+        echo [WARN] Clone failed, skipping
+    )
 )
-echo [OK] DouYin_Spider ready
+if exist "external\DouYin_Spider\.git" (
+    echo [OK] DouYin_Spider ready
+) else (
+    echo [WARN] DouYin_Spider not available - signing will not work
+)
 echo.
 
 echo [4/6] Checking jsrsasign...
 if exist "external\DouYin_Spider\node_modules\jsrsasign\package.json" (
     echo [OK] jsrsasign already installed
 ) else if exist "external\DouYin_Spider\package.json" (
-    echo [*] Installing via npmmirror...
+    echo [*] Installing jsrsasign (npmmirror)...
     pushd "%~dp0external\DouYin_Spider"
-    call "%NPM_CMD%" install jsrsasign --registry=https://registry.npmmirror.com
+    call "%NPM_CMD%" install jsrsasign --registry=https://registry.npmmirror.com --ignore-scripts --no-optional
     popd
-    echo [OK] jsrsasign installed
+    if errorlevel 1 (
+        echo [WARN] jsrsasign install failed, but may still work
+    ) else (
+        echo [OK] jsrsasign installed
+    )
 )
 echo.
 
