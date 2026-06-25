@@ -58,17 +58,22 @@ if exist "external\DouYin_Spider\.git" (
 echo.
 
 echo [4/6] Checking jsrsasign...
-if exist "external\DouYin_Spider\node_modules\jsrsasign\package.json" (
+set "JSR_INSTALLED=0"
+if exist "external\DouYin_Spider\node_modules\jsrsasign\package.json" set "JSR_INSTALLED=1"
+if "%JSR_INSTALLED%"=="1" (
     echo [OK] jsrsasign already installed
-) else if exist "external\DouYin_Spider\package.json" (
-    echo [*] Installing jsrsasign (npmmirror)...
-    pushd "%~dp0external\DouYin_Spider"
-    call "%NPM_CMD%" install jsrsasign --registry=https://registry.npmmirror.com --ignore-scripts --no-optional
-    popd
-    if errorlevel 1 (
-        echo [WARN] jsrsasign install failed, but may still work
-    ) else (
-        echo [OK] jsrsasign installed
+)
+if "%JSR_INSTALLED%"=="0" (
+    if exist "external\DouYin_Spider\package.json" (
+        echo [*] Installing jsrsasign (npmmirror)...
+        pushd "%~dp0external\DouYin_Spider"
+        call "%NPM_CMD%" install jsrsasign --registry=https://registry.npmmirror.com --ignore-scripts --no-optional
+        popd
+        if errorlevel 1 (
+            echo [WARN] jsrsasign install failed, but may still work
+        ) else (
+            echo [OK] jsrsasign installed
+        )
     )
 )
 echo.
