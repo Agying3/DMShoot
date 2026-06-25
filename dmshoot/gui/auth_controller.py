@@ -1,12 +1,11 @@
 """认证控制器 — 从 MainWindow 提取的自动登录 & 平台连接逻辑"""
 
-import sys
 import logging as _logging
 
 from PySide6.QtCore import QThread, Signal as QtSignal
 
 from dmshoot.storage import database
-from dmshoot.utils.console_log import raw_header, raw_sep, FG_GOLD, FG_GREEN_B, FG_RED, RESET, BOLD
+from dmshoot.utils.console_log import raw_header, raw_sep, _console
 
 _COOKIE_PLATFORMS = frozenset({"douyin", "kuaishou"})
 
@@ -145,18 +144,17 @@ class AuthController:
     def _print_summary(self):
         """打印自动登录汇总"""
         raw_sep("┈", 50)
-        sys.stdout.write(f"{FG_GOLD}{BOLD}  DMShoot 启动完成{RESET}\n")
+        _console.print("[bold gold3]  DMShoot 启动完成[/bold gold3]")
         for platform, name in [("bilibili", "B站"), ("douyin", "抖音"), ("kuaishou", "快手")]:
             result = self._auto_login_results.get(platform)
             if result is None:
-                sys.stdout.write(f"  {FG_GOLD}{name}{RESET}  — 未配置\n")
+                _console.print(f"  [gold3]{name}[/gold3]  — 未配置")
             elif result[0]:
-                sys.stdout.write(f"  {FG_GREEN_B}{name} ✓ 已连接{RESET}  {result[1]}\n")
+                _console.print(f"  [bold green]{name} ✓ 已连接[/bold green]  {result[1]}")
             else:
-                sys.stdout.write(f"  {FG_RED}{name} ✕ 未登录{RESET}  {result[1]}\n")
+                _console.print(f"  [bold red]{name} ✕ 未登录[/bold red]  {result[1]}")
         raw_sep("┈", 50)
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+        _console.print("")
 
     # ── 扫码后连接 ──
 

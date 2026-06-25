@@ -1,210 +1,252 @@
-"""彩色终端日志 — 不写文件，只打控制台
+"""彩色终端日志 — Rich 风格，参考 QQBOT
 
 用法:
     from dmshoot.utils.console_log import get_logger
     logger = get_logger(__name__)
     logger.info("连接成功")
-    logger.success("消息已发送")
-    logger.warning("重试中...")
-    logger.ai_thinking("用户可能想问...")
-    logger.ai_msg("好的，我来帮你...")
-    logger.recv("抖音", "造化众生", "你好")
+    logger.success("消息已发送")          # ✅ 绿色
+    logger.warning("重试中...")            # ⚠️ 黄色
+    logger.error("发送失败")              # ❌ 红色
+    logger.ai_thinking("用户可能想问...") # 💭 青色
+    logger.ai_msg("好的，我来帮你...")     # 💬 绿色
+    logger.recv("抖音", "造化众生", "你好") # 📩 品红
 """
 
 import logging
 import sys
+import os
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Optional
 
-# ── ANSI 颜色 ──
-RESET   = "\033[0m"
-BOLD    = "\033[1m"
-DIM     = "\033[2m"
+# Windows: 强制 UTF-8 输出（Rich emoji 需要）
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONUTF8", "1")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
-# 前景色
-FG_WHITE   = "\033[37m"
-FG_GREEN   = "\033[32m"
-FG_YELLOW  = "\033[33m"
-FG_RED     = "\033[31m"
-FG_CYAN    = "\033[36m"
-FG_MAGENTA = "\033[35m"
-FG_BLUE_B   = "\033[94m"
-FG_GRAY    = "\033[90m"
+# ── Rich Console ──
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+from rich.theme import Theme
 
-# 高亮
-FG_GREEN_B  = "\033[92m"
-FG_YELLOW_B = "\033[93m"
-FG_CYAN_B   = "\033[96m"
-FG_GOLD     = "\033[38;5;214m"   # 金色：章节标题、分隔线
+# Rich 主题：对齐 QQBOT loguru 风格
+_RICH_THEME = Theme({
+    "time": "green",
+    "level.debug": "dim",
+    "level.info": "white",
+    "level.success": "bold green",
+    "level.warning": "bold yellow",
+    "level.error": "bold red",
+    "level.thinking": "bold cyan",
+    "module": "cyan",
+    "msg.content": "green",
+    "recv.platform": "magenta",
+})
+
+_console = Console(theme=_RICH_THEME, highlight=False)
 
 # ── 自定义日志级别 ──
-SUCCESS = 25  # 介于 INFO(20) 和 WARNING(30) 之间
-THINKING = 21  # 介于 INFO(20) 和 SUCCESS(25) 之间
+SUCCESS = 25
+THINKING = 21
 logging.addLevelName(SUCCESS, "SUCCESS")
 logging.addLevelName(THINKING, "THINKING")
 
 
 class ColoredFormatter(logging.Formatter):
-    """HH:MM:SS LEVEL MODULE | content，带颜色"""
+    """Rich 风格格式化器，含 Unicode 符号和颜色"""
 
-    LEVEL_COLORS = {
-        "DEBUG":    FG_GRAY,
-        "INFO":     FG_WHITE,
-        "SUCCESS":  FG_GREEN_B,
-        "WARNING":  FG_YELLOW_B,
-        "ERROR":    FG_RED,
-        "THINKING": FG_CYAN_B,
-        "RECV":     FG_MAGENTA,
+    LEVEL_STYLES = {
+        "DEBUG":    "level.debug",
+        "INFO":     "level.info",
+        "SUCCESS":  "level.success",
+        "WARNING":  "level.warning",
+        "ERROR":    "level.error",
+        "THINKING": "level.thinking",
     }
 
     def format(self, record: logging.LogRecord) -> str:
-        # 时间: 05-30 13:16:12
         now = datetime.fromtimestamp(record.created)
         ts = now.strftime("%m-%d %H:%M:%S")
-
-        # 级别: [INFO]
         level = record.levelname
-        color = self.LEVEL_COLORS.get(level, FG_WHITE)
-        level_str = f"{color}[{level}]{RESET}"
+        style = self.LEVEL_STYLES.get(level, "level.info")
 
-        # 模块名
+        # 特殊处理：RECV 和 AI MSG 不经过标准 logging 级别
+        recv_data = getattr(record, "_recv_data", None)
+        thinking = getattr(record, "_thinking", False)
+
+        if recv_data:
+            platform, sender, content = recv_data
+            return f"[time]{ts}[/time] [recv.platform][{platform}][/recv.platform] [dim]{sender}:[/dim] {content}"
+
+        if thinking:
+            return f"[time]{ts}[/time] [level.thinking]THINKING[/level.thinking] [module]{record.name}[/module] | [level.thinking]<thinking>[/level.thinking] {record.getMessage()} [level.thinking]</thinking>[/level.thinking]"
+
         mod = record.name
-        mod_str = f"{FG_BLUE_B}{mod}{RESET}"
-
-        # 内容
         msg = record.getMessage()
 
-        return f"{ts} {level_str} {mod_str} | {msg}"
+        # 特殊：AI MSG 用 <msg> 标签样式
+        if getattr(record, "_ai_msg", False):
+            return f"[time]{ts}[/time] [msg.content]MSG[/msg.content] [module]{mod}[/module] | [msg.content]<msg>[/msg.content] {msg} [msg.content]</msg>[/msg.content]"
 
-
-def _success(self, message, *args, **kwargs):
-    if self.isEnabledFor(SUCCESS):
-        self._log(SUCCESS, message, args, **kwargs)
+        return f"[time]{ts}[/time] [{style}]{level}[/{style}] [module]{mod}[/module] | {msg}"
 
 
 class ModuleLogger(logging.Logger):
-    """自定义 Logger，支持 success / ai_thinking / ai_msg / recv 方法"""
+    """自定义 Logger，支持 success / ai_thinking / ai_msg / recv / sep / title / header"""
 
-    def _log(self, level, msg, args, exc_info=None, extra=None, stack_info=False,
-             stacklevel=1):
-        thinking = (extra or {}).pop("thinking", False)
+    def _log(self, level, msg, args, exc_info=None, extra=None, stack_info=False, stacklevel=1):
+        # 提取特殊标记，转换为 record 属性传给 Formatter
+        new_extra = dict(extra) if extra else {}
+        thinking = new_extra.pop("thinking", False)
+        ai_msg = new_extra.pop("ai_msg", False)
+        recv_data = new_extra.pop("recv_data", None)
         if thinking:
-            super()._log(THINKING, f"{FG_CYAN_B}<thinking>{RESET} {msg} {FG_CYAN_B}</thinking>{RESET}", args,
-                        exc_info=exc_info, extra=extra, stack_info=stack_info,
-                        stacklevel=stacklevel + 1)
-        else:
-            super()._log(level, msg, args, exc_info=exc_info, extra=extra,
-                        stack_info=stack_info, stacklevel=stacklevel + 1)
+            new_extra["_thinking"] = True
+        if ai_msg:
+            new_extra["_ai_msg"] = True
+        if recv_data:
+            new_extra["_recv_data"] = recv_data
+        super()._log(level, msg, args, exc_info=exc_info, extra=new_extra if new_extra else None,
+                     stack_info=stack_info, stacklevel=stacklevel + 1)
 
     def success(self, msg, *args, **kwargs):
-        _success(self, msg, *args, **kwargs)
+        if self.isEnabledFor(SUCCESS):
+            self._log(SUCCESS, msg, args, **kwargs)
 
     def ai_thinking(self, msg: str):
-        """AI 思考过程日志"""
         self._log(logging.INFO, msg, (), extra={"thinking": True})
 
     def ai_msg(self, msg: str):
-        """AI 回复内容日志"""
-        self.info(f"{FG_GREEN_B}<msg>{RESET} {msg} {FG_GREEN_B}</msg>{RESET}")
+        self._log(logging.INFO, msg, (), extra={"ai_msg": True})
 
     def recv(self, platform: str, sender: str, content: str):
-        """收到平台私信"""
-        self.info(f"{FG_MAGENTA}[{platform}]{RESET} {DIM}{sender}:{RESET} {content}")
+        self._log(logging.INFO, content, (), extra={"recv_data": (platform, sender, content)})
+
+    # ── Rich 可视化 ──
 
     def sep(self, char: str = "─", count: int = 36):
-        """原始分隔线 — 不加时间戳/级别前缀"""
-        sys.stdout.write(f"{FG_GOLD}{char * count}{RESET}\n")
-        sys.stdout.flush()
+        """分隔线"""
+        _console.print(f"[dim]{char * count}[/dim]")
 
     def title(self, text: str):
-        """章节标题 — 不加时间戳/级别前缀"""
-        sys.stdout.write(f"{FG_GOLD}{text}{RESET}\n")
-        sys.stdout.flush()
+        """章节标题"""
+        _console.print(f"[bold gold3]{text}[/bold gold3]")
+
+    def header(self, text: str, width: int = 50):
+        """Rich Panel 标题（替代 raw_header）"""
+        _console.print()
+        _console.print(Panel(text, border_style="gold3", width=width))
+        _console.print()
+
+    def json_log(self, data: dict, title: str = ""):
+        """JSON 结构化日志（参考 QQBOT 的 indent=2 风格）"""
+        import json
+        if title:
+            _console.print(f"[dim]{title}[/dim]")
+        text = json.dumps(data, ensure_ascii=False, indent=2, default=str)
+        _console.print(Text(text, style="dim"))
 
 
 # ── 全局辅助函数 ──
 
 def raw_sep(char: str = "─", count: int = 36):
-    """原始分隔线 — 不加时间戳/级别前缀（模块级便捷函数）"""
-    sys.stdout.write(f"{FG_GOLD}{char * count}{RESET}\n")
-    sys.stdout.flush()
+    _console.print(f"[dim]{char * count}[/dim]")
 
 def raw_title(text: str):
-    """章节标题 — 不加时间戳/级别前缀（模块级便捷函数）"""
-    sys.stdout.write(f"{FG_GOLD}{text}{RESET}\n")
-    sys.stdout.flush()
+    _console.print(f"[bold gold3]{text}[/bold gold3]")
 
 def raw_header(text: str, width: int = 50):
-    """平台启动头 — 双线框金色标题，与 'DMShoot 就绪' 风格一致"""
-    bar = FG_GOLD + "═" * width + RESET
-    sys.stdout.write(f"\n{bar}\n{FG_GOLD}{BOLD}  {text}{RESET}\n{bar}\n\n")
-    sys.stdout.flush()
+    _console.print()
+    _console.print(Panel(text, border_style="gold3", width=width))
+    _console.print()
 
 
 # ── 日志级别过滤 ──
-_log_levels: dict[str, bool] = {}  # {category: enabled}
+_log_levels: dict[str, bool] = {}
 
 def set_log_level(category: str, enabled: bool):
-    """设置日志类别开关"""
     _log_levels[category] = enabled
 
 def is_log_enabled(category: str) -> bool:
-    """检查某类日志是否启用。未注册的类别默认启用。"""
     return _log_levels.get(category, True)
-# 避免污染第三方库（httpx/bilibili_api 等）的 logger
+
+
+# ── Rich Handler（桥接 logging → Rich Console）──
+
+class RichHandler(logging.Handler):
+    """将 logging 记录通过 Rich Console 输出"""
+
+    def __init__(self, level=logging.NOTSET):
+        super().__init__(level)
+        self.setFormatter(ColoredFormatter())
+
+    def emit(self, record: logging.LogRecord):
+        try:
+            msg = self.format(record)
+            _console.print(msg, markup=True)
+        except Exception:
+            self.handleError(record)
 
 
 # ── 初始化 ──
 _initialized = False
 
-
 def setup_console_logging(level: int = logging.DEBUG):
-    """初始化终端日志（全局调用一次）"""
     global _initialized
     if _initialized:
         return
 
-    # Windows: 启用 ANSI 转义序列
+    # Windows ANSI 支持（Rich 需要）
     if sys.platform == "win32":
         import ctypes
         kernel32 = ctypes.windll.kernel32
         kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
 
-    # 根 logger
     root = logging.getLogger()
     root.setLevel(level)
-
-    # 清除已有 handler
     root.handlers.clear()
 
-    # 只加控制台 handler
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(level)
-    handler.setFormatter(ColoredFormatter())
-    root.addHandler(handler)
+    # Rich 终端 handler
+    rh = RichHandler(level=level)
+    root.addHandler(rh)
 
-    # 三方库别吵
+    # 文件 handler（5MB × 5 个备份）
+    log_dir = Path(__file__).parent.parent.parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    fh = RotatingFileHandler(
+        str(log_dir / "dmshoot.log"),
+        maxBytes=5 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    fh.setLevel(level)
+    fh.setFormatter(logging.Formatter(
+        "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    root.addHandler(fh)
+
+    # 三方库静默
     for lib in ["httpx", "httpcore", "urllib3", "asyncio", "playwright", "MARKDOWN", "markdown"]:
         logging.getLogger(lib).setLevel(logging.WARNING)
-    # websocket 库的断连 ERROR 由我们自己 WARNING 处理
     logging.getLogger("websocket").setLevel(logging.CRITICAL)
 
     _initialized = True
 
 
 def get_logger(name: str = "dmshoot") -> ModuleLogger:
-    """获取带模块短名的 ModuleLogger。
-    只对 DMShoot logger 设置 ModuleLogger 类，不污染全局。
-
-    注意：logging 模块会缓存 logger 实例。如果之前已通过 logging.getLogger(name)
-    创建了标准 Logger，需先清除缓存，否则 setLoggerClass 不生效。"""
+    """获取带模块短名的 ModuleLogger"""
     saved = logging.getLoggerClass()
     try:
         logging.setLoggerClass(ModuleLogger)
-        # 清除缓存中已存在的标准 Logger 实例（否则返回缓存的旧实例）
         mgr = logging.Logger.manager
         if name in mgr.loggerDict and not isinstance(mgr.loggerDict[name], ModuleLogger):
             del mgr.loggerDict[name]
-        return logging.getLogger(name)  # type: ignore
+        return logging.getLogger(name)
     finally:
         logging.setLoggerClass(saved)
