@@ -70,17 +70,10 @@ if not exist ".venv" (
 )
 echo [OK] venv ready
 echo.
+set "PIP_ARG=-i https://mirrors.aliyun.com/pypi/simple/"
+set "PW_HOST=https://npmmirror.com/mirrors/playwright/"
 
-echo.[50/50] Mirror options
-echo   1. Tsinghua  2. Aliyun  Enter=default
-set /p CHOICE="Choice [1/2/Enter]: "
-
-if "%CHOICE%"=="1" set "PIP_ARG=-i https://pypi.tuna.tsinghua.edu.cn/simple --extra-index-url https://pypi.org/simple"
-if "%CHOICE%"=="2" set "PIP_ARG=-i https://mirrors.aliyun.com/pypi/simple/"
-if "%CHOICE%"=="2" set "PW_HOST=https://npmmirror.com/mirrors/playwright/"
-if "%CHOICE%"=="1" set "PW_HOST=https://npmmirror.com/mirrors/playwright/"
-
-echo [6/6] Installing pip packages...
+echo [6/6] Installing pip packages (Aliyun)...
 call .venv\Scripts\activate.bat
 pip install --upgrade pip %PIP_ARG% -q
 pip install -r requirements.txt %PIP_ARG%
