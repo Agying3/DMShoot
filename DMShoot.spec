@@ -34,11 +34,21 @@ hiddenimports = [
 ]
 
 # ── 数据文件 ──
-datas = [
+# prompts（排除不开源的 圡泬.txt / 柁炑.txt）
+import os as _os
+_prompt_base = "prompts"
+_prompt_datas = []
+for _root, _dirs, _files in _os.walk(_prompt_base):
+    for _f in _files:
+        if _f in ("圡泬.txt", "柁炑.txt"):
+            continue  # 不开源
+        _src = _os.path.join(_root, _f)
+        _dst_dir = _os.path.relpath(_root, ".")
+        _prompt_datas.append((_src, _dst_dir))
+
+datas = _prompt_datas + [
     # GUI 样式
     ("dmshoot/gui/styles.qss", "dmshoot/gui"),
-    # prompts
-    ("prompts/", "prompts"),
     # 平台 icon
     ("resources/", "resources"),
     # DouYin_Spider SDK (签名 JS)
