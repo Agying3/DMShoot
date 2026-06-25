@@ -925,8 +925,9 @@ class SettingsDialog(QDialog):
         self.config.reply_delay_max = self.delay_max.value()
         self.config.max_context_rounds = self.context_rounds.value()
 
-        # 后端
-        self.config.msg_backend = self._backend_combo.currentData()
+        # 后端（性能页懒加载，可能尚未创建）
+        if hasattr(self, '_backend_combo'):
+            self.config.msg_backend = self._backend_combo.currentData()
 
         # 发送限流
         from dmshoot.core.rate_limiter import get_limiter
