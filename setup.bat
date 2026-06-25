@@ -1,16 +1,19 @@
 @echo off
-cd /d "%~dp0" 2>nul
-chcp 65001 >nul 2>&1
 title DMShoot Setup
+cls
 
-echo.
 echo ============================================
-echo   DMShoot Setup - %~dp0
+echo   DMShoot Setup
+echo   %~dp0
 echo ============================================
 echo.
+echo Press any key to start setup...
+pause >nul
+
+cd /d "%~dp0"
 
 echo [1/6] Checking Python...
-python --version >nul 2>&1
+python --version 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Python 3.10+ not found in PATH
     echo Please install Python and retry
