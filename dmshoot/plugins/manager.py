@@ -28,12 +28,11 @@ class PluginManager:
         self._discover()
 
     def _discover(self):
-        plugins_dir = Path(__file__).parent
-        for d in sorted(plugins_dir.iterdir()):
-            if not d.is_dir() or d.name.startswith("_") or d.name.startswith("."):
-                continue
+        """发现插件（PyInstaller compatible: 不用 iterdir）"""
+        plugin_names = ["bilibili", "douyin", "kuaishou", "xiaohongshu"]
+        for name in plugin_names:
             try:
-                mod = importlib.import_module(f"dmshoot.plugins.{d.name}")
+                mod = importlib.import_module(f"dmshoot.plugins.{name}")
                 if hasattr(mod, "PLUGIN_INFO"):
                     info_dict = mod.PLUGIN_INFO
                     info = PluginInfo(
@@ -46,7 +45,7 @@ class PluginManager:
                     self._plugins[info.id] = info
             except Exception as e:
                 import logging
-                logging.getLogger(__name__).warning(f"插件 {d.name} 加载失败: {e}")
+                logging.getLogger(__name__).warning(f"插件 {name} 加载失败: {e}")
 
     def list(self) -> List[PluginInfo]:
         return list(self._plugins.values())

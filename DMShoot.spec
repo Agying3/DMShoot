@@ -43,6 +43,8 @@ datas = [
     ("resources/", "resources"),
     # DouYin_Spider SDK (签名 JS)
     ("external/DouYin_Spider/", "external/DouYin_Spider"),
+    # 小红书签名 JS (Spider_XHS)
+    ("dmshoot/plugins/xiaohongshu/static/", "dmshoot/plugins/xiaohongshu/static"),
 ]
 
 # ── 二进制文件（直接打进 exe） ──
