@@ -1,4 +1,4 @@
-@echo off
+@echo on
 title DMShoot Setup
 cls
 
@@ -7,10 +7,17 @@ echo   DMShoot Setup
 echo   %~dp0
 echo ============================================
 echo.
-echo Press any key to start setup...
-pause >nul
+pause
 
 cd /d "%~dp0"
+if %errorlevel% neq 0 (
+    echo [FATAL] Cannot cd to %~dp0
+    pause
+    exit /b 1
+)
+
+echo Directory set OK, continuing...
+echo.
 
 echo [1/6] Checking Python...
 python --version 2>&1
