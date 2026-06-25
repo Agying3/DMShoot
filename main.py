@@ -2,25 +2,32 @@
 
 import sys
 import os
+import traceback
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+# PyInstaller 打包后使用 _MEIPASS 临时目录
+if getattr(sys, 'frozen', False):
+    BASE_DIR = Path(sys._MEIPASS)
+else:
+    BASE_DIR = Path(__file__).parent
+
+if str(BASE_DIR) not in sys.path:
+    sys.path.insert(0, str(BASE_DIR))
 
 # ── 终端日志（最早初始化）──
-from dmshoot.utils.console_log import setup_console_logging
-setup_console_logging()
+try:
+    from dmshoot.utils.console_log import setup_console_logging
+    setup_console_logging()
+except Exception:
+    pass  # PyInstaller 环境可能 import 失败，等 GUI 启动后再处理
 
 
 def _ensure_playwright():
     """首次启动自动安装 Playwright Chromium（~300MB）"""
-    from pathlib import Path
     pw_browsers = Path.home() / "AppData" / "Local" / "ms-playwright"
     if pw_browsers.exists() and any(pw_browsers.glob("chromium-*")):
-        return  # 已安装
+        return
     print("[*] 首次启动 — 安装 Playwright Chromium (~300MB)...")
-    print("    可能要几分钟，请耐心等待...")
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
@@ -35,28 +42,37 @@ def _ensure_playwright():
 
 def main():
     """启动 AI 值守监控台"""
-    _ensure_playwright()
-    from PySide6.QtWidgets import QApplication
-    from dmshoot.gui.main_window import MainWindow
+    try:
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        from PySide6.QtCore import Qt
 
-    # 避免 QThread 退出警告
-    import signal
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
+        app = QApplication(sys.argv)
+        app.setAttribute(Qt.AA_UseSoftwareOpenGL)
+        app.setApplicationName("DMShoot")
+        app.setOrganizationName("DMShoot")
 
-    app = QApplication(sys.argv)
-    # 强制软件渲染，避免 QtCharts GPU 驱动 segfault
-    from PySide6.QtCore import Qt
-    app.setAttribute(Qt.AA_UseSoftwareOpenGL)
-    app.setApplicationName("DMShoot")
-    app.setOrganizationName("DMShoot")
+        # 后台安装 Playwright Chromium
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(500, _ensure_playwright)
 
-    window = MainWindow()
-    window.show()
+        from dmshoot.gui.main_window import MainWindow
+        window = MainWindow()
+        window.show()
 
-    code = app.exec()
-    # ── 关闭后清理（MainWindow.closeEvent 已停适配器/线程池） ──
-    _safe_cleanup(window, app)
-    sys.exit(code)
+        code = app.exec()
+        _safe_cleanup(window, app)
+        sys.exit(code)
+
+    except Exception as e:
+        # PyInstaller 环境无控制台，弹窗显示错误
+        err = "".join(traceback.format_exception_only(e))
+        try:
+            from PySide6.QtWidgets import QApplication, QMessageBox
+            app = QApplication(sys.argv)
+            QMessageBox.critical(None, "DMShoot 启动失败", f"{err}")
+        except Exception:
+            print(f"FATAL: {err}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _safe_cleanup(window, app):
@@ -91,7 +107,7 @@ if __name__ == "__main__":
     if "--profile" in sys.argv:
         import cProfile, pstats, io
         from datetime import datetime
-        prof_path = PROJECT_ROOT / "docs" / f"profile_{datetime.now().strftime('%m%d_%H%M')}.prof"
+        prof_path = BASE_DIR / "docs" / f"profile_{datetime.now().strftime('%m%d_%H%M')}.prof"
         print(f"[PROFILE] 启动性能分析，输出: {prof_path}")
         profiler = cProfile.Profile()
         profiler.enable()
