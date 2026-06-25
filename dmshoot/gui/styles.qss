@@ -367,6 +367,21 @@ QLabel#contactBadge {
     font-weight: 700;
 }
 
+QPushButton#activeMsgBtn {
+    background: rgba(74, 222, 128, 0.12);
+    border: 1px solid rgba(74, 222, 128, 0.25);
+    border-radius: 4px;
+    color: rgba(74, 222, 128, 0.75);
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 0;
+}
+QPushButton#activeMsgBtn:hover {
+    background: rgba(74, 222, 128, 0.25);
+    border: 1px solid rgba(74, 222, 128, 0.50);
+    color: #4ADE80;
+}
+
 /* ── 对话区 ── */
 QScrollArea#chatScroll {
     background: transparent;

@@ -9,5 +9,6 @@ markdown>=3.7,<4.0
 psutil>=5.9,<6.0
 requests>=2.31,<3.0
 cryptography>=48.0,<49.0
+rich>=13.7.0
 # DouYin_Spider — 已clone到 external/DouYin_Spider (不是pip包)
 # setup.bat 会自动 git clone，无需手动操作

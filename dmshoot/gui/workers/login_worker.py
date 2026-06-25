@@ -89,5 +89,12 @@ except Exception as e:
             self.result.emit(self.platform, None)
 
     def stop(self):
-        self.quit()
-        self.wait(2000)
+        """强制终止线程。
+        
+        注意: 必须用 terminate() 而非 quit()，因为 run() 里是 asyncio.run() 同步阻塞调用，
+        不是 Qt 事件循环。quit() 对阻塞线程无效，会导致旧平台的 Playwright 浏览器窗口残留，
+        切换到其他平台登录时两个窗口同时存在。
+        """
+        if self.isRunning():
+            self.terminate()
+            self.wait(3000)

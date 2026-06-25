@@ -8,10 +8,10 @@ import httpx
 from pathlib import Path
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QListWidget, QListWidgetItem,
-    QLabel, QHBoxLayout, QFrame
+    QLabel, QHBoxLayout, QFrame, QPushButton, QSizePolicy
 )
-from PySide6.QtCore import Signal, Qt, QThread
-from PySide6.QtGui import QPixmap, QPainter, QPainterPath
+from PySide6.QtCore import Signal, Qt, QThread, QTimer, QPoint, QEvent
+from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QColor
 
 import hashlib
 import time as _time_ms
@@ -21,11 +21,17 @@ from dmshoot.gui.widgets.glow_progress_bar import GlowProgressBar
 
 
 def _update_item_text(w: QFrame, last_text: str = "", peer_name: str = "", peer_id: str = ""):
-    """更新 ContactItem 的名字和最后消息文字（复用布局遍历逻辑）"""
+    """更新 ContactItem 的名字和最后消息文字"""
     lyt = w.layout()
-    if not lyt or lyt.count() < 2:
+    if not lyt:
         return
-    info_lyt = lyt.itemAt(1)
+    # 找到 info layout（QVBoxLayout），跳过 avatar、AI按钮等 widget
+    info_lyt = None
+    for i in range(lyt.count()):
+        item = lyt.itemAt(i)
+        if item and hasattr(item, 'count'):
+            info_lyt = item
+            break
     if not info_lyt or info_lyt.count() < 2:
         return
     nl = info_lyt.itemAt(0).widget()
@@ -54,6 +60,7 @@ def _round_pixmap(pix: QPixmap, size: int) -> QPixmap:
 
 class ContactItem(QFrame):
     clicked = Signal(str)
+    active_message_requested = Signal(str)  # session_id — 右键请求AI主动发消息
 
     def __init__(self, session: SessionRecord):
         super().__init__()
@@ -65,13 +72,28 @@ class ContactItem(QFrame):
         self._avatar_loaded = False
 
         layout = QHBoxLayout()
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(10, 8, 6, 8)
+        layout.setSpacing(4)
 
         self.avatar = QLabel(session.peer_name[0] if session.peer_name else "?")
         self.avatar.setObjectName("contactAvatar")
         self.avatar.setFixedSize(44, 44)
         self.avatar.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.avatar)
+
+        # AI 按钮
+        ai_btn = QPushButton("AI")
+        ai_btn.setObjectName("activeMsgBtn")
+        ai_btn.setFixedSize(28, 22)
+        ai_btn.setCursor(Qt.PointingHandCursor)
+        ai_btn.setMouseTracking(True)
+        ai_btn.setAttribute(Qt.WA_Hover, True)
+        ai_btn.clicked.connect(lambda: self.active_message_requested.emit(self.session_id))
+        layout.addWidget(ai_btn)
+
+        # 自定义毛玻璃 tooltip
+        self._tooltip = _GlassTooltip(self)
+        ai_btn.installEventFilter(self)
 
         info = QVBoxLayout()
         info.setSpacing(3)
@@ -116,6 +138,44 @@ class ContactItem(QFrame):
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.session_id)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Enter:
+            pos = obj.mapToGlobal(QPoint(0, -self._tooltip.height() - 4))
+            self._tooltip.move(pos)
+            self._tooltip.show()
+        elif event.type() == QEvent.Type.Leave:
+            self._tooltip.hide()
+        return super().eventFilter(obj, event)
+
+
+class _GlassTooltip(QFrame):
+    """毛玻璃 tooltip — QWidget 模拟，支持真正的 rgba 半透明"""
+
+    def __init__(self, parent):
+        super().__init__(None)  # 无父级 = 顶层窗口
+        self.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+
+        label = QLabel("基于上下文主动发一句")
+        label.setStyleSheet(
+            "color: rgba(255,255,255,0.85); font-size: 11px; padding: 4px 10px;"
+        )
+        lyt = QHBoxLayout()
+        lyt.setContentsMargins(0, 0, 0, 0)
+        lyt.addWidget(label)
+        self.setLayout(lyt)
+        self.adjustSize()
+        self.hide()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QColor(24, 26, 36, 200))  # rgba ≈ 0.78 不透明度
+        p.setPen(QColor(255, 255, 255, 12))
+        p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 6, 6)
+        super().paintEvent(event)
 
 
 class _AvatarLoader(QThread):
@@ -175,6 +235,7 @@ class _AvatarLoader(QThread):
 
 class ContactList(QWidget):
     session_selected = Signal(str, str)  # session_id, peer_name
+    active_message_requested = Signal(str)  # session_id — AI主动发消息
 
     def __init__(self):
         super().__init__()
@@ -252,12 +313,17 @@ class ContactList(QWidget):
                 item = QListWidgetItem()
                 widget = ContactItem(s)
                 widget.clicked.connect(lambda sid=s.session_id, n=s.peer_name: self.session_selected.emit(sid, n))
+                widget.active_message_requested.connect(self.active_message_requested)
                 item.setSizeHint(widget.sizeHint())
                 self.list.addItem(item)
                 self.list.setItemWidget(item, widget)
                 self._widget_map[sid] = widget
                 if s.avatar_url:
                     added.append((sid, s.avatar_url))
+
+        # 确保所有widget都有AI按钮（延迟检查，等布局渲染完）
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(100, self._ensure_all_ai_buttons)
 
         if added:
             # 去重
@@ -272,6 +338,25 @@ class ContactList(QWidget):
             timer.setSingleShot(True)
             timer.timeout.connect(lambda urls=unique: self._load_avatars(urls))
             timer.start(300)
+
+    def _ensure_all_ai_buttons(self):
+        """确保所有已存在的 widget 都有可见的 AI 按钮"""
+        for sid, w in self._widget_map.items():
+            btn = w.findChild(QPushButton, "activeMsgBtn")
+            if btn is None:
+                btn = QPushButton("AI")
+                btn.setObjectName("activeMsgBtn")
+                btn.setFixedSize(28, 22)
+                btn.setCursor(Qt.PointingHandCursor)
+                btn.setToolTip("基于上下文主动发一句")
+                btn.clicked.connect(lambda _, sid=sid: self.active_message_requested.emit(sid))
+                w.layout().insertWidget(1, btn)
+                btn.show()
+            # 强制可见（解决渲染/布局导致的隐藏）
+            btn.setVisible(True)
+            btn.show()
+            btn.raise_()
+            btn.repaint()
 
     def update_one_session(self, session_id: str, last_message: str = "", last_time: float = 0, unread_count: int = -1):
         """O(1) 增量更新一个会话的最近消息文字和未读徽标，不查 DB"""

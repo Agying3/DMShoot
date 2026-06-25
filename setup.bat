@@ -1,5 +1,6 @@
 @echo off
-chcp 65001 >nul
+cd /d "%~dp0" 2>nul
+chcp 65001 >nul 2>&1
 title DMShoot Setup
 
 echo ============================================
@@ -15,7 +16,25 @@ if %errorlevel% neq 0 (
 )
 echo [OK] Python ready
 
+rem ---- Auto-detect Node.js ----
+set "NODE_CMD=node"
+set "NPM_CMD=npm"
 node --version >nul 2>&1
+if %errorlevel% neq 0 (
+    for /d %%d in ("%USERPROFILE%\.workbuddy\binaries\node\versions\*") do (
+        if exist "%%d\node.exe" (
+            set "NODE_CMD=%%d\node.exe"
+            set "NPM_CMD=%%d\npm.cmd"
+        )
+    )
+)
+if "%NODE_CMD%"=="node" (
+    if exist "C:\Program Files\nodejs\node.exe" (
+        set "NODE_CMD=C:\Program Files\nodejs\node.exe"
+        set "NPM_CMD=C:\Program Files\nodejs\npm.cmd"
+    )
+)
+%NODE_CMD% --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Node.js not found - required for DouYin/XHS signing
     pause
@@ -23,23 +42,33 @@ if %errorlevel% neq 0 (
 )
 echo [OK] Node.js ready
 
-echo [*] Checking DouYin_Spider...
+rem ---- DouYin_Spider SDK ----
 if not exist "external\DouYin_Spider\.git" (
     echo [*] Cloning DouYin_Spider SDK...
     if not exist "external" mkdir external
-    git clone --depth 1 https://github.com/Agying3/DouYin_Spider.git external\DouYin_Spider
+    git clone --depth 1 https://github.com/Agying3/DouYin_Spider.git external\DouYin_Spider 2>&1
     if %errorlevel% neq 0 (
-        echo [WARN] Clone failed. Manually clone to external/DouYin_Spider
+        echo [WARN] Clone failed, skipping
     )
 )
 echo [OK] DouYin_Spider ready
 
-echo [*] Installing Node.js dependencies (jsrsasign)...
-cd /d external\DouYin_Spider
-call npm install jsrsasign
-cd /d %~dp0
-echo [OK] jsrsasign installed
+rem ---- jsrsasign ----
+if exist "external\DouYin_Spider\node_modules\jsrsasign\package.json" (
+    echo [OK] jsrsasign already installed, skipping
+) else if exist "external\DouYin_Spider\package.json" (
+    echo [*] Installing jsrsasign (npmmirror)...
+    pushd "%~dp0external\DouYin_Spider"
+    call "%NPM_CMD%" install jsrsasign --registry=https://registry.npmmirror.com
+    popd
+    if %errorlevel% neq 0 (
+        echo [WARN] jsrsasign install failed
+    ) else (
+        echo [OK] jsrsasign installed
+    )
+)
 
+rem ---- Python venv ----
 if not exist ".venv" (
     echo [*] Creating venv...
     python -m venv .venv
@@ -49,9 +78,9 @@ echo [OK] venv ready
 echo.
 echo -------------------------------------------------
 echo   Mirror Options:
-echo   1. Tsinghua (fast, but some large packages may be missing)
-echo   2. Aliyun   (fast, has PySide6)
-echo   Enter = default PyPI (slow outside China)
+echo   1. Tsinghua
+echo   2. Aliyun
+echo   Enter = default PyPI
 echo -------------------------------------------------
 set /p CHOICE="Select [1/2/Enter]: "
 
@@ -79,9 +108,17 @@ echo [*] Default PyPI
 :install
 call .venv\Scripts\activate.bat
 pip install --upgrade pip %PIP_ARG% -q
+if %errorlevel% neq 0 (
+    echo [WARN] pip upgrade failed, continuing...
+)
 
 echo [*] Installing requirements...
 pip install -r requirements.txt %PIP_ARG%
+if %errorlevel% neq 0 (
+    echo [ERROR] pip install failed
+    pause
+    exit /b 1
+)
 echo [OK] Requirements installed
 
 echo [*] Installing Playwright browser (~300MB)...
