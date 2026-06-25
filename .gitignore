@@ -3,9 +3,10 @@ __pycache__/
 *.py[cod]
 *.so
 *.egg-info/
+# PyInstaller output
 dist/
 build/
-*.spec
+
 
 # Virtual env
 .venv/
