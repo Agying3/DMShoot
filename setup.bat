@@ -1,6 +1,6 @@
 @echo off
 title DMShoot Setup
-
+cls
 echo ============================================
 echo   DMShoot Setup
 echo ============================================
@@ -8,10 +8,13 @@ echo.
 echo Press any key to begin...
 pause >nul
 
-cd /d "%~dp0" || (echo [FATAL] cd failed & pause & exit /b 1)
+cd /d "%~dp0"
+if errorlevel 1 goto cd_fail
+echo.
 
 echo [1/6] Checking Python...
-python --version 2>&1 || (echo [ERROR] Python not found & pause & exit /b 1)
+python --version
+if errorlevel 1 goto no_python
 echo [OK] Python ready
 echo.
 
@@ -19,7 +22,7 @@ echo [2/6] Checking Node.js...
 set "NODE_CMD=node"
 set "NPM_CMD=npm"
 node --version >nul 2>&1
-if %errorlevel% neq 0 (
+if errorlevel 1 (
     for /d %%d in ("%USERPROFILE%\.workbuddy\binaries\node\versions\*") do (
         if exist "%%d\node.exe" (
             set "NODE_CMD=%%d\node.exe"
@@ -33,25 +36,16 @@ if "%NODE_CMD%"=="node" (
         set "NPM_CMD=C:\Program Files\nodejs\npm.cmd"
     )
 )
-%NODE_CMD% --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Node.js not found
-    echo Need Node.js for DouYin/XHS signing
-    pause
-    exit /b 1
-)
 %NODE_CMD% --version
+if errorlevel 1 goto no_node
 echo [OK] Node.js ready
 echo.
 
-echo [3/6] Checking DouYin_Spider SDK...
+echo [3/6] Checking DouYin_Spider...
 if not exist "external\DouYin_Spider\.git" (
-    echo [*] Cloning DouYin_Spider...
+    echo [*] Cloning...
     if not exist "external" mkdir external
     git clone --depth 1 https://github.com/Agying3/DouYin_Spider.git external\DouYin_Spider
-    if %errorlevel% neq 0 (
-        echo [WARN] Clone failed, skipping
-    )
 )
 echo [OK] DouYin_Spider ready
 echo.
@@ -60,90 +54,72 @@ echo [4/6] Checking jsrsasign...
 if exist "external\DouYin_Spider\node_modules\jsrsasign\package.json" (
     echo [OK] jsrsasign already installed
 ) else if exist "external\DouYin_Spider\package.json" (
-    echo [*] Installing jsrsasign (npmmirror)...
+    echo [*] Installing via npmmirror...
     pushd "%~dp0external\DouYin_Spider"
     call "%NPM_CMD%" install jsrsasign --registry=https://registry.npmmirror.com
     popd
-    if %errorlevel% neq 0 (
-        echo [WARN] jsrsasign install failed
-    ) else (
-        echo [OK] jsrsasign installed
-    )
+    echo [OK] jsrsasign installed
 )
 echo.
 
-echo [5/6] Checking Python venv...
+echo [5/6] Checking venv...
 if not exist ".venv" (
     echo [*] Creating venv...
     python -m venv .venv
-    if %errorlevel% neq 0 (
-        echo [ERROR] venv creation failed
-        pause
-        exit /b 1
-    )
+    if errorlevel 1 goto no_venv
 )
 echo [OK] venv ready
 echo.
 
-echo -------------------------------------------------
-echo   Mirror Options:
-echo   1. Tsinghua (fast)
-echo   2. Aliyun   (has PySide6)
-echo   Enter = default PyPI
-echo -------------------------------------------------
-set /p CHOICE="Select [1/2/Enter]: "
+echo.[50/50] Mirror options
+echo   1. Tsinghua  2. Aliyun  Enter=default
+set /p CHOICE="Choice [1/2/Enter]: "
 
-if "%CHOICE%"=="1" goto :tsinghua
-if "%CHOICE%"=="2" goto :aliyun
-goto :no_mirror
+if "%CHOICE%"=="1" set "PIP_ARG=-i https://pypi.tuna.tsinghua.edu.cn/simple --extra-index-url https://pypi.org/simple"
+if "%CHOICE%"=="2" set "PIP_ARG=-i https://mirrors.aliyun.com/pypi/simple/"
+if "%CHOICE%"=="2" set "PW_HOST=https://npmmirror.com/mirrors/playwright/"
+if "%CHOICE%"=="1" set "PW_HOST=https://npmmirror.com/mirrors/playwright/"
 
-:tsinghua
-set "PIP_ARG=-i https://pypi.tuna.tsinghua.edu.cn/simple --extra-index-url https://pypi.org/simple"
-set "PW_HOST=https://npmmirror.com/mirrors/playwright/"
-echo [*] Tsinghua + PyPI fallback
-goto :install
-
-:aliyun
-set "PIP_ARG=-i https://mirrors.aliyun.com/pypi/simple/"
-set "PW_HOST=https://npmmirror.com/mirrors/playwright/"
-echo [*] Aliyun mirror
-goto :install
-
-:no_mirror
-set PIP_ARG=
-set PW_HOST=
-echo [*] Default PyPI
-
-:install
-echo [6/6] Installing Python packages...
+echo [6/6] Installing pip packages...
 call .venv\Scripts\activate.bat
-if %errorlevel% neq 0 (
-    echo [WARN] venv activate failed, using system pip
-)
-
 pip install --upgrade pip %PIP_ARG% -q
-if %errorlevel% neq 0 (
-    echo [WARN] pip upgrade failed, continuing...
-)
-
-echo [*] Installing requirements.txt...
 pip install -r requirements.txt %PIP_ARG%
-if %errorlevel% neq 0 (
-    echo [ERROR] pip install failed
-    pause
-    exit /b 1
-)
+if errorlevel 1 goto pip_fail
 echo [OK] Requirements installed
 
-echo [*] Installing Playwright browser (~300MB)...
+echo [*] Installing Playwright browser...
 if defined PW_HOST set "PLAYWRIGHT_DOWNLOAD_HOST=%PW_HOST%"
 playwright install chromium
-if %errorlevel% neq 0 (
-    echo [WARN] Playwright install failed
-) else (
-    echo [OK] Playwright installed
-)
+echo [OK] Playwright installed
 
+goto done
+
+:cd_fail
+echo [FATAL] Cannot access %~dp0
+pause
+exit /b 1
+
+:no_python
+echo [ERROR] Python not found in PATH
+pause
+exit /b 1
+
+:no_node
+echo [ERROR] Node.js not found
+pause
+exit /b 1
+
+:no_venv
+echo [ERROR] venv creation failed
+pause
+exit /b 1
+
+:pip_fail
+echo [ERROR] pip install failed
+pause
+exit /b 1
+
+:done
 echo.
 echo ============================================
 echo   Setup complete! Run run.bat to start.
