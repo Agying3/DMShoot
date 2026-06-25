@@ -1,33 +1,17 @@
-@echo on
+@echo off
 title DMShoot Setup
-cls
 
 echo ============================================
 echo   DMShoot Setup
-echo   %~dp0
 echo ============================================
 echo.
-pause
+echo Press any key to begin...
+pause >nul
 
-cd /d "%~dp0"
-if %errorlevel% neq 0 (
-    echo [FATAL] Cannot cd to %~dp0
-    pause
-    exit /b 1
-)
-
-echo Directory set OK, continuing...
-echo.
+cd /d "%~dp0" || (echo [FATAL] cd failed & pause & exit /b 1)
 
 echo [1/6] Checking Python...
-python --version 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Python 3.10+ not found in PATH
-    echo Please install Python and retry
-    pause
-    exit /b 1
-)
-python --version
+python --version 2>&1 || (echo [ERROR] Python not found & pause & exit /b 1)
 echo [OK] Python ready
 echo.
 
