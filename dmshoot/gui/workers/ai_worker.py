@@ -23,3 +23,25 @@ class AIWorker(QThread):
             loop.close()
         if reply:
             self.done.emit(self._msg.session_id, reply)
+
+
+class ActiveAIWorker(QThread):
+    """在独立线程中调用 AI 生成主动消息（不依赖用户消息触发）"""
+    done = QtSignal(str, str)  # (session_id, reply_text)
+
+    def __init__(self, session_id: str, ai, parent=None):
+        super().__init__(parent)
+        self._session_id = session_id
+        self._ai = ai
+
+    def run(self):
+        import asyncio
+        async def go():
+            return await self._ai.generate_active_message(self._session_id)
+        loop = asyncio.new_event_loop()
+        try:
+            reply = loop.run_until_complete(go())
+        finally:
+            loop.close()
+        if reply:
+            self.done.emit(self._session_id, reply)

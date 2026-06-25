@@ -18,6 +18,7 @@ class SessionRecord:
     unread_count: int = 0
     is_pinned: bool = False
     is_muted: bool = False
+    active_messaging: bool = False  # AI主动消息开关
     avatar_url: str = ""
 
     @property

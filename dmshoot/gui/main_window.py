@@ -35,7 +35,7 @@ from dmshoot.utils.console_log import get_logger
 from dmshoot.core.adapter_manager import AdapterManager
 from dmshoot.gui.auth_controller import AuthController
 from dmshoot.gui.signal_wiring import SignalWiring
-from dmshoot.gui.workers.ai_worker import AIWorker
+from dmshoot.gui.workers.ai_worker import AIWorker, ActiveAIWorker
 
 logger = get_logger(__name__)
 
@@ -437,6 +437,10 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(100, lambda: self.sidebar.set_active("home"))
         # 有 cookie 就自动登录
         QTimer.singleShot(800, self._auth_ctrl.auto_login)
+        # 通讯录右键菜单：AI主动发一句
+        self.page_home.contacts.active_message_requested.connect(
+            self._on_active_message_request
+        )
         # 性能监控 — 每秒 tick
         self._perf_timer = QTimer(self)
         self._perf_timer.timeout.connect(self._tick_perf)
@@ -847,6 +851,25 @@ class MainWindow(QMainWindow):
         trigger_msg = (history[-2].content[:200] if len(history) >= 2
                        else (parts[0] if parts else reply_text))
         self.monitor.add_reply_log(trigger_msg, reply_text)
+
+    # ── AI 主动消息 ──
+
+    def _on_active_message_request(self, session_id: str):
+        """通讯录右键菜单：立即基于上下文生成一条主动消息并发送"""
+        ai = get_ai()
+        if not ai.configured:
+            self.bus.log.emit("WARN", "AI主动消息", "AI 未配置，无法生成消息")
+            return
+        logger.info(f"[AI主动消息] 为 {session_id} 生成消息...")
+        self.bus.log.emit("INFO", "AI主动消息", f"正在为 {session_id} 生成消息...")
+        QTimer.singleShot(100, lambda: self._call_active_ai(session_id))
+
+    def _call_active_ai(self, session_id: str, ai=None):
+        """在后台线程调用 AI 生成主动消息"""
+        ai = ai or get_ai()
+        t = ActiveAIWorker(session_id, ai, self)
+        t.done.connect(lambda sid, txt, m=ai.model: self._on_ai_response(sid, txt, m))
+        t.start()
 
     def _get_prompt(self) -> str:
         prompts = load_prompts()

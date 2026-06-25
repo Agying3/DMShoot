@@ -142,6 +142,12 @@ def init_database():
             WHERE platform = '' AND session_id LIKE '%:%'
         """)
 
+    # 迁移: 给 sessions 表加 active_messaging 列（AI主动消息开关）
+    try:
+        cur.execute("ALTER TABLE sessions ADD COLUMN active_messaging INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
+
     # 索引
     cur.execute("""
         CREATE INDEX IF NOT EXISTS idx_messages_session
@@ -178,8 +184,8 @@ def upsert_session(session: SessionRecord) -> bool:
     with _lock:
         cur = conn.execute("""
             INSERT INTO sessions (session_id, platform, peer_name, peer_id,
-                last_message, last_time, unread_count, is_pinned, is_muted, avatar_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                last_message, last_time, unread_count, is_pinned, is_muted, active_messaging, avatar_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
                 peer_name=excluded.peer_name,
                 peer_id=excluded.peer_id,
@@ -191,7 +197,7 @@ def upsert_session(session: SessionRecord) -> bool:
         """, (
             session.session_id, session.platform, session.peer_name, session.peer_id,
             session.last_message, session.last_time, session.unread_count,
-            int(session.is_pinned), int(session.is_muted), session.avatar_url
+            int(session.is_pinned), int(session.is_muted), int(session.active_messaging), session.avatar_url
         ))
         changed = cur.rowcount > 0
         conn.commit()
@@ -233,13 +239,13 @@ def upsert_sessions_batch(sessions: list[SessionRecord]) -> int:
         data = [
             (s.session_id, s.platform, s.peer_name, s.peer_id,
              s.last_message, s.last_time, s.unread_count,
-             int(s.is_pinned), int(s.is_muted), s.avatar_url)
+             int(s.is_pinned), int(s.is_muted), int(s.active_messaging), s.avatar_url)
             for s in sessions
         ]
         cur = conn.executemany("""
             INSERT INTO sessions (session_id, platform, peer_name, peer_id,
-                last_message, last_time, unread_count, is_pinned, is_muted, avatar_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                last_message, last_time, unread_count, is_pinned, is_muted, active_messaging, avatar_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
                 peer_name=excluded.peer_name,
                 peer_id=excluded.peer_id,
@@ -283,13 +289,34 @@ def update_session_name_avatar(session_id: str, peer_name: str, avatar_url: str)
     with _lock:
         conn.execute("""
             INSERT INTO sessions (session_id, platform, peer_name, peer_id,
-                last_message, last_time, unread_count, is_pinned, is_muted, avatar_url)
-            VALUES (?, '', ?, '', '', 0, 0, 0, 0, ?)
+                last_message, last_time, unread_count, is_pinned, is_muted, active_messaging, avatar_url)
+            VALUES (?, '', ?, '', '', 0, 0, 0, 0, 0, ?)
             ON CONFLICT(session_id) DO UPDATE SET
                 peer_name=excluded.peer_name,
                 avatar_url=excluded.avatar_url
         """, (session_id, peer_name, avatar_url))
         conn.commit()
+
+
+def set_active_messaging(session_id: str, enabled: bool):
+    """设置会话的 AI 主动消息开关"""
+    conn = _get_conn()
+    with _lock:
+        conn.execute(
+            "UPDATE sessions SET active_messaging = ? WHERE session_id = ?",
+            (int(enabled), session_id),
+        )
+        conn.commit()
+
+
+def is_active_messaging(session_id: str) -> bool:
+    """查询会话是否启用了 AI 主动消息"""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT active_messaging FROM sessions WHERE session_id = ?",
+        (session_id,)
+    ).fetchone()
+    return bool(row["active_messaging"]) if row else False
 
 
 def _row_to_session(row) -> SessionRecord:
@@ -304,6 +331,7 @@ def _row_to_session(row) -> SessionRecord:
         unread_count=row["unread_count"],
         is_pinned=bool(row["is_pinned"]),
         is_muted=bool(row["is_muted"]),
+        active_messaging=bool(row["active_messaging"]),
         avatar_url=row["avatar_url"],
     )
 

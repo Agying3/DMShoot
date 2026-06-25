@@ -251,6 +251,44 @@ class AIBackend:
 
         return reply
 
+    async def generate_active_message(self, session_id: str) -> Optional[str]:
+        """主动生成消息（不依赖用户消息触发）
+        
+        加载该会话的上下文历史，注入「主动发起对话」指令，
+        让 AI 基于已有对话自然地开启新话题或延续旧话题。
+        
+        Returns: AI 生成的回复文本，失败返回 None
+        """
+        if not self.configured:
+            return None
+
+        # 构建上下文（复用 _get_or_create_context 但不追加用户消息）
+        ctx = self._get_or_create_context(session_id)
+        
+        # 注入主动消息系统指令
+        ctx.append({"role": "system", "content": (
+            f"你现在应该主动发起一段对话。根据你和对方的聊天历史，"
+            f"自然地开启一个新话题或延续上一个对话。"
+            f"像真人一样说话，不要说「我来主动聊聊」之类的元描述。"
+            f"保持你{self._persona_name}的个性和说话风格。"
+        )})
+
+        messages = self._build_messages(ctx)
+        reply = await self._call_api(messages)
+
+        # 从上下文末尾移除系统指令，不污染历史
+        if ctx and ctx[-1].get("role") == "system":
+            ctx.pop()
+
+        if reply:
+            ctx.append({"role": "assistant", "content": reply})
+
+        # 裁剪上下文
+        if len(ctx) > self.MAX_CONTEXT_MESSAGES * 2:
+            self._contexts[session_id] = ctx[-self.MAX_CONTEXT_MESSAGES * 2:]
+
+        return reply
+
 
 # 全局AI单例
 _ai_instance: Optional[AIBackend] = None
