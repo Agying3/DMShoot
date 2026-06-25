@@ -3,20 +3,25 @@ cd /d "%~dp0" 2>nul
 chcp 65001 >nul 2>&1
 title DMShoot Setup
 
+echo.
 echo ============================================
-echo   DMShoot Setup
+echo   DMShoot Setup - %~dp0
 echo ============================================
 echo.
 
+echo [1/6] Checking Python...
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Python 3.10+ not found
+    echo [ERROR] Python 3.10+ not found in PATH
+    echo Please install Python and retry
     pause
     exit /b 1
 )
+python --version
 echo [OK] Python ready
+echo.
 
-rem ---- Auto-detect Node.js ----
+echo [2/6] Checking Node.js...
 set "NODE_CMD=node"
 set "NPM_CMD=npm"
 node --version >nul 2>&1
@@ -36,26 +41,30 @@ if "%NODE_CMD%"=="node" (
 )
 %NODE_CMD% --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Node.js not found - required for DouYin/XHS signing
+    echo [ERROR] Node.js not found
+    echo Need Node.js for DouYin/XHS signing
     pause
     exit /b 1
 )
+%NODE_CMD% --version
 echo [OK] Node.js ready
+echo.
 
-rem ---- DouYin_Spider SDK ----
+echo [3/6] Checking DouYin_Spider SDK...
 if not exist "external\DouYin_Spider\.git" (
-    echo [*] Cloning DouYin_Spider SDK...
+    echo [*] Cloning DouYin_Spider...
     if not exist "external" mkdir external
-    git clone --depth 1 https://github.com/Agying3/DouYin_Spider.git external\DouYin_Spider 2>&1
+    git clone --depth 1 https://github.com/Agying3/DouYin_Spider.git external\DouYin_Spider
     if %errorlevel% neq 0 (
         echo [WARN] Clone failed, skipping
     )
 )
 echo [OK] DouYin_Spider ready
+echo.
 
-rem ---- jsrsasign ----
+echo [4/6] Checking jsrsasign...
 if exist "external\DouYin_Spider\node_modules\jsrsasign\package.json" (
-    echo [OK] jsrsasign already installed, skipping
+    echo [OK] jsrsasign already installed
 ) else if exist "external\DouYin_Spider\package.json" (
     echo [*] Installing jsrsasign (npmmirror)...
     pushd "%~dp0external\DouYin_Spider"
@@ -67,19 +76,25 @@ if exist "external\DouYin_Spider\node_modules\jsrsasign\package.json" (
         echo [OK] jsrsasign installed
     )
 )
+echo.
 
-rem ---- Python venv ----
+echo [5/6] Checking Python venv...
 if not exist ".venv" (
     echo [*] Creating venv...
     python -m venv .venv
+    if %errorlevel% neq 0 (
+        echo [ERROR] venv creation failed
+        pause
+        exit /b 1
+    )
 )
 echo [OK] venv ready
-
 echo.
+
 echo -------------------------------------------------
 echo   Mirror Options:
-echo   1. Tsinghua
-echo   2. Aliyun
+echo   1. Tsinghua (fast)
+echo   2. Aliyun   (has PySide6)
 echo   Enter = default PyPI
 echo -------------------------------------------------
 set /p CHOICE="Select [1/2/Enter]: "
@@ -106,13 +121,18 @@ set PW_HOST=
 echo [*] Default PyPI
 
 :install
+echo [6/6] Installing Python packages...
 call .venv\Scripts\activate.bat
+if %errorlevel% neq 0 (
+    echo [WARN] venv activate failed, using system pip
+)
+
 pip install --upgrade pip %PIP_ARG% -q
 if %errorlevel% neq 0 (
     echo [WARN] pip upgrade failed, continuing...
 )
 
-echo [*] Installing requirements...
+echo [*] Installing requirements.txt...
 pip install -r requirements.txt %PIP_ARG%
 if %errorlevel% neq 0 (
     echo [ERROR] pip install failed
@@ -124,7 +144,11 @@ echo [OK] Requirements installed
 echo [*] Installing Playwright browser (~300MB)...
 if defined PW_HOST set "PLAYWRIGHT_DOWNLOAD_HOST=%PW_HOST%"
 playwright install chromium
-echo [OK] Playwright installed
+if %errorlevel% neq 0 (
+    echo [WARN] Playwright install failed
+) else (
+    echo [OK] Playwright installed
+)
 
 echo.
 echo ============================================
