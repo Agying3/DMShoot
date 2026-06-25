@@ -37,7 +37,7 @@ _NODE = None
 
 
 def _find_node() -> str:
-    """惰性发现 Node.js: PATH → WorkBuddy 管理版本(自动扫描) → 系统安装目录"""
+    """惰性发现 Node.js: 优先当前目录 → PATH → WorkBuddy → 系统 → PyInstaller bundle"""
     global _NODE
     if _NODE is not None:
         return _NODE
@@ -45,6 +45,12 @@ def _find_node() -> str:
         shutil.which("node"),
         shutil.which("node.exe"),
     ]
+    # PyInstaller 打包时 node.exe 放在 _MEIPASS
+    import sys
+    if getattr(sys, 'frozen', False):
+        bundled = Path(sys._MEIPASS) / "node.exe"
+        if bundled.is_file():
+            candidates.insert(0, str(bundled))
     # 扫描 WorkBuddy 管理的 Node 版本（不硬编码版本号）
     wb_versions = Path.home() / ".workbuddy" / "binaries" / "node" / "versions"
     if wb_versions.exists():

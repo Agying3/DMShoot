@@ -45,6 +45,25 @@ datas = [
     ("external/DouYin_Spider/", "external/DouYin_Spider"),
 ]
 
+# ── 二进制文件（直接打进 exe） ──
+import glob as _glob
+_node_dir = r"C:\Users\Administrator\.workbuddy\binaries\node\versions"
+_node_dirs = sorted(_glob.glob(f"{_node_dir}/*"), reverse=True)
+_node_exe = None
+for _d in _node_dirs:
+    _exe = os.path.join(_d, "node.exe")
+    if os.path.isfile(_exe):
+        _node_exe = _exe
+        break
+if not _node_exe:
+    for _d in [r"C:\Program Files\nodejs", r"C:\Program Files (x86)\nodejs"]:
+        _exe = os.path.join(_d, "node.exe")
+        if os.path.isfile(_exe):
+            _node_exe = _exe
+            break
+
+binaries = [(_node_exe, ".")] if _node_exe else []
+
 # ── 排除臃肿模块 ──
 excludes = [
     "tkinter", "matplotlib", "numpy", "scipy",
@@ -58,7 +77,7 @@ optimize = 2   # -OO: 去除 assert + docstring
 a = Analysis(
     ["main.py"],
     pathex=[],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

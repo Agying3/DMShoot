@@ -13,8 +13,29 @@ from dmshoot.utils.console_log import setup_console_logging
 setup_console_logging()
 
 
+def _ensure_playwright():
+    """首次启动自动安装 Playwright Chromium（~300MB）"""
+    from pathlib import Path
+    pw_browsers = Path.home() / "AppData" / "Local" / "ms-playwright"
+    if pw_browsers.exists() and any(pw_browsers.glob("chromium-*")):
+        return  # 已安装
+    print("[*] 首次启动 — 安装 Playwright Chromium (~300MB)...")
+    print("    可能要几分钟，请耐心等待...")
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            browser.close()
+    except Exception:
+        import subprocess
+        subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
+                       check=False)
+    print("[OK] Chromium 已就绪")
+
+
 def main():
     """启动 AI 值守监控台"""
+    _ensure_playwright()
     from PySide6.QtWidgets import QApplication
     from dmshoot.gui.main_window import MainWindow
 
