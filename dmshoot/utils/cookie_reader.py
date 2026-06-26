@@ -400,16 +400,18 @@ def extract_bilibili_cookies_sync(on_qr_callback=None) -> dict:
         raw = ""
     finally:
         _cleanup_tempfile(tmp)
-    # 需要提取的 cookie 字段（bilibili-api-python 17.4+ Credential 新要求）
+    # 需要提取的 cookie 字段。B站浏览器端大小写不一致（如 DedeUserID vs dedeuserid），
+    # 统一用小写匹配再映射回原始 key。
     cookie_keys = ["SESSDATA", "bili_jct", "buvid3", "buvid4", "dedeuserid", "ac_time_value"]
+    key_lower_map = {k.lower(): k for k in cookie_keys}
     result = {k: "" for k in cookie_keys}
     if raw:
         for part in raw.split("; "):
             if "=" in part:
                 k, v = part.split("=", 1)
-                k = k.strip()
-                if k in result:
-                    result[k] = v
+                key_lower = k.strip().lower()
+                if key_lower in key_lower_map:
+                    result[key_lower_map[key_lower]] = v
     return result
 
 
