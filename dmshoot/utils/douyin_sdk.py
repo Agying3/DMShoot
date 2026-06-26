@@ -219,12 +219,21 @@ def send_message_cached(auth, peer_uid: int, text: str, cache: dict = None) -> b
     try:
         from dy_apis.douyin_api import DouyinAPI
         result = DouyinAPI.create_conversation(auth, peer_uid)
-        if not result or None in result:
+        if not result or len(result) < 3:
             logging.getLogger(__name__).warning(
-                f"create_conversation 返回无效: uid={peer_uid}, result={result}"
+                f"create_conversation 返回无效(短): uid={peer_uid}, result={result}"
             )
             return False
-        cid, sid, ticket = result
+        cid, sid, ticket = result[0], result[1], result[2]
+        # ticket 可能为 None/0/"" → 尝试从 auth 对象获取
+        if not ticket:
+            logging.getLogger(__name__).warning(
+                f"create_conversation ticket为空: uid={peer_uid}, ticket={ticket!r}"
+            )
+            # 尝试用 auth.ticket（web_protect ticket）
+            ticket = getattr(auth, 'ticket', None) or ""
+        if not ticket:
+            return False
         return DouyinAPI.send_msg(auth, cid, sid, ticket, text)
     except Exception as e:
         logging.getLogger(__name__).error(f"抖音发送失败(uid={peer_uid}): {e}")
