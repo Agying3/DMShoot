@@ -215,28 +215,19 @@ _conv_cache: dict[str, tuple] = {}  # key: "{uid_hash}", 全局缓存
 
 
 def send_message_cached(auth, peer_uid: int, text: str, cache: dict = None) -> bool:
-    """创建对话并发消息，带缓存（避免每次 send 重复 create_conversation）"""
-    if cache is None:
-        cache = _conv_cache
-    uid_str = str(peer_uid)
+    """发送私信。每次都创建对话确保 ticket 新鲜"""
     try:
         from dy_apis.douyin_api import DouyinAPI
-        # 检查缓存是否有效（create_conversation 可能返回含 None 的元组）
-        if uid_str not in cache or None in cache.get(uid_str, ()):
-            result = DouyinAPI.create_conversation(auth, peer_uid)
-            if not result or None in result:
-                logging.getLogger(__name__).warning(
-                    f"create_conversation 返回无效数据: {result}"
-                )
-                return False
-            cache[uid_str] = result
-        cid, sid, ticket = cache[uid_str]
+        result = DouyinAPI.create_conversation(auth, peer_uid)
+        if not result or None in result:
+            logging.getLogger(__name__).warning(
+                f"create_conversation 返回无效: uid={peer_uid}, result={result}"
+            )
+            return False
+        cid, sid, ticket = result
         return DouyinAPI.send_msg(auth, cid, sid, ticket, text)
     except Exception as e:
         logging.getLogger(__name__).error(f"抖音发送失败(uid={peer_uid}): {e}")
-        # 清除坏缓存，下次重试
-        if uid_str in cache:
-            del cache[uid_str]
         return False
 
 
