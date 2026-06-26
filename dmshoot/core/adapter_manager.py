@@ -52,7 +52,8 @@ class AdapterManager:
         if adapter and hasattr(adapter, "stop"):
             threading.Thread(target=adapter.stop, daemon=True).start()
         name = _PLATFORM_NAMES.get(platform, platform)
-        self._page_login.set_monitor_running(platform, False)
+        if self._page_login:
+            self._page_login.set_monitor_running(platform, False)
         self._bus.log.emit("INFO", name, "监听已停止")
         logger.warning(f"{name} 监听已停止")
 
@@ -60,11 +61,14 @@ class AdapterManager:
         """清理 cookie：停适配器，清 DB 会话，清首页，删状态文件"""
         self.stop_from_ui(platform)
         database.delete_sessions(platform)
-        self._sidebar.update_status(platform, "✕")
+        if self._sidebar:
+            self._sidebar.update_status(platform, "✕")
         self._bus.set_platform_status(platform, "离线", "")
-        self._page_home._msg_cache.clear()
-        self._page_home._load_contacts()
-        self._page_login.on_disconnected(platform)
+        if self._page_home:
+            self._page_home._msg_cache.clear()
+            self._page_home._load_contacts()
+        if self._page_login:
+            self._page_login.on_disconnected(platform)
         # 删除状态文件（_replied 去重集、cookie 兜底文件等）
         state_files = {
             "douyin": ["data/douyin_state.json"],
@@ -114,10 +118,13 @@ class AdapterManager:
             if platform in _IM_UNAVAILABLE_PLATFORMS:
                 self._bus.log.emit("WARN", name,
                     "⚠️ Web 端不支持私信收发 — 详见右侧聊天区域显示的逆向日志")
-            self._monitor.show()
-            self._page_login.set_monitor_running(platform, True)
-            self._page_home._load_contacts()
-            QTimer.singleShot(5000, lambda: self._page_home._load_contacts())
+            if self._monitor:
+                self._monitor.show()
+            if self._page_login:
+                self._page_login.set_monitor_running(platform, True)
+            if self._page_home:
+                self._page_home._load_contacts()
+                QTimer.singleShot(5000, lambda: self._page_home._load_contacts())
         except Exception as e:
             import traceback
             logger.error(f"[{platform}] 适配器启动失败: {e}\n{traceback.format_exc()}")
