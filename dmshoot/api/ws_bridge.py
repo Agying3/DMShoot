@@ -66,15 +66,15 @@ class WSBridge:
     def _wire_signals(self):
         if not self._bus:
             return
-        self._bus.message.connect(self._on_message)
+        self._bus.new_message.connect(self._on_message)
         self._bus.platform_status.connect(self._on_platform_status)
-        self._bus.log_signal.connect(self._on_log)
+        self._bus.log.connect(self._on_log)
 
     def _unwire_signals(self):
         if not self._bus:
             return
         try:
-            self._bus.message.disconnect(self._on_message)
+            self._bus.new_message.disconnect(self._on_message)
         except Exception:
             pass
         try:
@@ -82,7 +82,7 @@ class WSBridge:
         except Exception:
             pass
         try:
-            self._bus.log_signal.disconnect(self._on_log)
+            self._bus.log.disconnect(self._on_log)
         except Exception:
             pass
 
@@ -119,20 +119,17 @@ class WSBridge:
 
     # ── Signal 回调 ──
 
-    def _on_message(self, platform: str, session_id: str, sender_name: str,
-                    content: str, msg_type: str = "text", timestamp: float = None,
-                    sender_id: str = "", is_self: bool = False, **kwargs):
-        if timestamp is None:
-            timestamp = time.time()
-        asyncio.ensure_future(self._send("message", {
-            "platform": platform,
-            "session_id": session_id,
-            "sender_id": str(sender_id),
-            "sender_name": sender_name,
-            "content": content,
-            "msg_type": msg_type,
-            "timestamp": timestamp,
-            "is_self": is_self,
+    def _on_message(self, msg):
+        """msg: ChatMessage 对象"""
+        asyncio.ensure_future(self._send("new_message", {
+            "platform": msg.platform if hasattr(msg, 'platform') else "",
+            "session_id": msg.session_id,
+            "sender_id": str(getattr(msg, 'sender_id', '')),
+            "sender_name": msg.sender_name or "",
+            "content": msg.content or "",
+            "msg_type": getattr(msg, 'msg_type', 'text'),
+            "timestamp": getattr(msg, 'timestamp', time.time()),
+            "is_self": bool(getattr(msg, 'is_self', False)),
         }))
 
     def _on_platform_status(self, platform: str, status: str, detail: str = ""):

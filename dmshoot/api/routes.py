@@ -26,17 +26,15 @@ logger = logging.getLogger("dmshoot.api.routes")
 # ── 全局引用（延迟初始化，避免循环导入） ──
 
 _adapter_mgr = None
-_auth_ctrl = None
 _config = None
 
 _PLATFORMS = {"douyin", "bilibili", "kuaishou", "xiaohongshu"}
 
 
-def init(adapter_mgr, auth_ctrl, config):
+def init(adapter_mgr, config):
     """由 main_headless.py 在启动时调用，注入依赖"""
-    global _adapter_mgr, _auth_ctrl, _config
+    global _adapter_mgr, _config
     _adapter_mgr = adapter_mgr
-    _auth_ctrl = auth_ctrl
     _config = config
 
 
@@ -59,7 +57,7 @@ async def health():
 async def adapter_status():
     platforms = {}
     for p in _PLATFORMS:
-        adapter = _adapter_mgr._adapters.get(p)
+        adapter = _adapter_mgr.adapters.get(p)
         platforms[p] = AdapterStatusItem(
             connected=adapter is not None and getattr(adapter, "_connected", False),
             status=_get_platform_status(p),
@@ -70,7 +68,7 @@ async def adapter_status():
 
 
 def _get_platform_status(platform: str) -> str:
-    adapter = _adapter_mgr._adapters.get(platform)
+    adapter = _adapter_mgr.adapters.get(platform)
     if not adapter:
         return "offline"
     if getattr(adapter, "_connected", False):
@@ -84,7 +82,7 @@ async def adapter_start(req: AdapterStartRequest):
     logger.info("[%s] platform=%s op=adapter_start | 正在启动", rid, req.platform)
     t0 = time.time()
     try:
-        _adapter_mgr.start_from_ui(req.platform)
+        _adapter_mgr.start(req.platform)
         logger.info("[%s] platform=%s op=adapter_start latency=%dms | 已触发启动",
                     rid, req.platform, int((time.time()-t0)*1000))
         return {"ok": True, "platform": req.platform, "status": "connecting"}
@@ -96,7 +94,7 @@ async def adapter_start(req: AdapterStartRequest):
 async def adapter_stop(req: AdapterStopRequest):
     rid = _req_id()
     logger.info("[%s] platform=%s op=adapter_stop | 正在停止", rid, req.platform)
-    _adapter_mgr.stop_from_ui(req.platform)
+    _adapter_mgr.stop(req.platform)
     return {"ok": True, "platform": req.platform}
 
 
@@ -189,7 +187,10 @@ async def get_sessions(platform: Optional[str] = Query(None)):
 @router.get("/messages/{session_id:path}")
 async def get_messages(session_id: str, limit: int = Query(50, le=200), before: Optional[float] = Query(None)):
     from dmshoot.storage import database
-    msgs = database.get_messages(session_id, limit=limit, before=before)
+    msgs = database.get_messages(session_id, limit=limit)
+    if before:
+        msgs = [m for m in msgs if (m.timestamp or 0) < before]
+        msgs = msgs[:limit]
     items = [
         MessageItem(
             msg_id=m.id,
@@ -220,7 +221,7 @@ async def send_message(req: MessageSendRequest):
     if platform not in _PLATFORMS:
         raise HTTPException(400, detail={"error": "platform_not_found", "detail": platform})
 
-    adapter = _adapter_mgr._adapters.get(platform)
+    adapter = _adapter_mgr.adapters.get(platform)
     if not adapter or not getattr(adapter, "_connected", False):
         raise HTTPException(400, detail={"error": "platform_offline", "detail": f"{platform} 未连接"})
 
