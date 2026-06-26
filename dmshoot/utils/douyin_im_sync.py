@@ -223,7 +223,7 @@ def _fetch_raw_via_subprocess(cookie_str: str) -> tuple[Optional[bytes], dict, l
         logger.info("→ 同步中（Playwright 浏览器拉取，首次约 30s）...")
         result = subprocess.run(
             [sys.executable, '-c', _PW_SCRIPT, cookie_str],
-            capture_output=True, text=True, timeout=90,
+            capture_output=True, text=True, encoding='utf-8', timeout=90,
             cwd=os.path.dirname(os.path.abspath(__file__)),
         )
         output = result.stdout.strip()
