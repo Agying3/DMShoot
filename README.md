@@ -4,10 +4,24 @@
 [![PySide6](https://img.shields.io/badge/GUI-PySide6-green.svg)](https://pypi.org/project/PySide6/)
 [![SQLite](https://img.shields.io/badge/Database-SQLite_WAL-orange.svg)](https://www.sqlite.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/badge/Release-v0.2.0-brightgreen)](https://github.com/Agying3/DMShoot/releases)
 
-一个基于 PySide6 的多平台私信聚合桌面应用，支持抖音、B站等平台的私信接收与 AI 自动回复。
+一个基于 PySide6 的多平台私信聚合桌面应用，支持抖音、B站等平台的私信接收与 **AI 自动回复**。
+
+> **下载**: [DMShoot-v0.2.0.exe](https://github.com/Agying3/DMShoot/releases/download/v0.2.0/DMShoot-v0.2.0.exe) (157MB，含 Node.js)
 
 ![主界面 - 首页聊天](screenshots/main_window.png)
+
+---
+
+## 平台支持
+
+| 平台 | 私信接收 | AI 自动回复 | 扫码登录 |
+|------|:---:|:---:|:---:|
+| 抖音 | ✅ | ✅ | ✅ |
+| B站 | ✅ | ✅ | ✅ |
+| 小红书 | ❌ | ❌ | ✅ 仅登录 |
+| 快手 | ❌ | ❌ | ❌ |
 
 ---
 
@@ -19,46 +33,40 @@
 - 侧边栏连接状态实时反馈
 
 ### 扫码登录
-- 基于 **Playwright** 的自动化浏览器扫码
-- 支持 Cookie 持久化，一次登录长期有效
-- 自动检测登录状态，过期自动重新扫码
-
-![登录页面](screenshots/002_login.png)
+- 基于 **Playwright** 的浏览器自动化扫码
+- Cookie 持久化，一次登录长期有效
+- 自动检测登录状态，过期提示重新扫码
 
 ### AI 智能回复
 - 集成 **DeepSeek API**（兼容 OpenAI 格式）
 - 多角色提示词系统：自定义 AI 性格与回复风格
-- 支持行为预设 + 角色预设双维度配置
+- 行为预设 + 角色预设双维度配置
 - 可配置回复延迟、上下文轮数、模型参数
 
-![AI设置页面](screenshots/003_deepseek.png)
+### AI 主动消息
+- 通讯录每行右侧 **绿色 AI 按钮**，一键触发 AI 生成主动消息
+- 基于实时对话上下文，AI 生成自然搭讪/问候
+- 右键菜单快速操作
 
 ### 提示词管理
-- 内置热情朋友、专业客服、高冷话痨三组角色
-- 可自定义行为预设和角色预设
+- 内置多组预设角色（热情朋友、专业客服、高冷话痨等）
+- 可自定义行为预设和角色提示词
 - 实时预览和编辑
-
-![提示词页面](screenshots/004_prompt.png)
 
 ---
 
-## 次要功能
+## 其他功能
 
 | 功能 | 说明 |
 |------|------|
-| **深色/浅色主题** | 侧边栏一键切换，自动适配全部界面 |
-| **自定义壁纸** | 聊天背景支持自定义图片 |
+| **深色/浅色主题** | 侧边栏一键切换 |
 | **窗口置顶** | 标题栏图钉按钮，始终可见 |
-| **性能监控** | CPU/内存/消息吞吐量实时图表 + 弹出窗口 |
-| **WAL 五层防御** | 防止 SQLite WAL 模式文件损坏 |
-
-![性能监控](screenshots/007_perf_popup.png)
+| **性能监控** | CPU/内存/消息吞吐量实时图表 |
 | **消息去重** | 数据库唯一索引 + 内存集合双防线 |
 | **断线重连** | 指数退避（1→30s）自动重连 |
-| **速率限制** | 8 workers 共享线程池 + 背压控制 |
-| **终端日志** | 结构化彩色终端输出，带时间戳和模块标签 |
-
-![设置对话框](screenshots/005_settings.png)
+| **速率限制** | 每条消息间隔保护，防封号 |
+| **终端日志** | Rich 彩色日志 + 文件轮转（5MB×5） |
+| **WAL 保护** | SQLite WAL 五层防御，防数据损坏 |
 
 ---
 
@@ -163,37 +171,27 @@ self.on_error(ErrorCategory.AUTH, "Cookie 已过期")
 
 ## 快速开始
 
-### 环境要求
-- Python 3.10+
-- Node.js 18+（抖音/B站/小红书签名需要）
-- Go 1.21+（可选，仅 msg-service 需要）
+### 方式一：直接下载（推荐）
 
-### 安装
+从 [Releases](https://github.com/Agying3/DMShoot/releases) 下载 `DMShoot-v0.2.0.exe`，双击运行即可。
+
+> 首次启动会自动安装 Playwright Chromium 浏览器（~300MB，仅一次）。
+
+### 方式二：源码运行
+
+**环境要求**
+- Python 3.10+
+- Node.js 18+（抖音签名需要，exe 已内置）
+- Git
 
 ```bash
-# 1. 克隆仓库
-git clone https://github.com/yourname/DMShoot.git
+# 克隆 & 安装
+git clone https://github.com/Agying3/DMShoot.git
 cd DMShoot
-
-# 2. 运行安装脚本
 setup.bat
 
-# 或手动安装：
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-playwright install chromium
-```
-
-### 运行
-
-```bash
-# 一键启动
+# 启动
 run.bat
-
-# 或手动：
-.venv\Scripts\activate
-python main.py
 ```
 
 ---
