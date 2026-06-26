@@ -14,6 +14,11 @@
 8. [风险与阻碍](#8-风险与阻碍)
 9. [与当前 PySide6 方案对比](#9-与当前-pyside6-方案对比)
 10. [建议执行路径](#10-建议执行路径)
+11. [验收用例](#11-验收用例)
+12. [失败场景与降级策略](#12-失败场景与降级策略)
+13. [日志规范](#13-日志规范)
+14. [部署检查清单](#14-部署检查清单)
+15. [文档变更记录](#15-文档变更记录)
 
 ---
 
@@ -942,3 +947,409 @@ MVP 过了就全速。旧 `main.py` 不动，新增：
 ### 第三步：切换 & 发布（1 天）
 
 新版本稳定后，`main.py` 标记为 legacy，正式发布 Godot 版本。
+
+---
+
+## 11. 验收用例
+
+### 11.1 适配器启动（POST /api/adapter/start）
+
+| 用例 ID | 输入 | 预期 HTTP | 预期响应 | 预期 UI 状态 |
+|------|------|:---:|------|------|
+| TC-A001 | `{"platform":"douyin","auto_reply":true}` | 200 | `{"ok":true,"platform":"douyin","status":"connecting"}` | 侧边栏抖音指示灯变 ⏳ 加载动画，登录页状态显示"连接中..." |
+| TC-A002 | `{"platform":"douyin"}` (缺 auto_reply) | 200 | `{"ok":true}` (默认 auto_reply=true) | 同上 |
+| TC-A003 | `{"platform":"invalid"}` | 400 | `{"error":"platform_not_found"}` | Godot Toast 弹窗 "平台不存在" |
+| TC-A004 | `{}` (缺 platform) | 400 | `{"error":"validation_error","detail":"platform is required"}` | Godot Toast "参数错误" |
+| TC-A005 | `{"platform":"douyin"}` 无 Cookie | 200→WS推送 | `{"ok":true}` → 3秒后 WS `event:platform_status` status="error" | 侧边栏变 ❌，"请先扫码登录" |
+
+### 11.2 扫码登录（POST /api/login/scan）
+
+| 用例 ID | 输入 | 预期 HTTP | 预期 WS 事件序列 | 预期 UI |
+|------|------|:---:|------|------|
+| TC-L001 | `{"platform":"douyin"}` | 200 | `qr_code` (2-5s内) → 用户扫码 → `login_ok` | 弹窗显示二维码→扫码后2秒窗口关闭，登录页显示"已保存✓" |
+| TC-L002 | `{"platform":"bilibili"}` | 200 | 同上 | 同上 |
+| TC-L003 | 扫码超时 160 秒 | 200 | `qr_code` → 160s后 `login_fail` `{"reason":"timeout"}` | 弹窗自动关闭，**Toast "扫码超时，请重试"** |
+| TC-L004 | 正在扫码中再发一次请求 | 400 | 无新 WS | **Toast "该平台正在扫码中，请等待"** |
+| TC-L005 | Playwright 崩溃（无 Chromium） | 200→WS | `login_fail` `{"reason":"browser_error"}` | **弹窗关闭** + 红色 Toast "浏览器启动失败，请运行 playwright install chromium" |
+
+### 11.3 发送消息（POST /api/message/send）
+
+| 用例 ID | 输入 | 预期 HTTP | 预期响应 | 预期 UI |
+|------|------|:---:|------|------|
+| TC-M001 | `{"session_id":"douyin:...","text":"你好"}` | 200 | `{"ok":true}` | 消息气泡追加到聊天窗，输入框清空 |
+| TC-M002 | `{"session_id":"douyin:...","text":""}` | 400 | `{"error":"validation_error"}` | 输入框不变，Toast "消息不能为空" |
+| TC-M003 | `{"session_id":"","text":"xxx"}` | 400 | `{"error":"validation_error"}` | Toast "会话 ID 不能为空" |
+| TC-M004 | 发送到未连接的平台 | 400 | `{"error":"platform_offline"}` | Toast "[平台名] 未连接，请先监听" |
+| TC-M005 | 30 秒内连续发第 4 条 | 400 | `{"error":"rate_limited"}` | Toast "发送过于频繁，请稍候" + 输入框恢复 |
+| TC-M006 | Cookie 过期后发送 | 400 | `{"error":"auth_expired"}` | **Toast "[平台名] Cookie 已过期" + 登录页对应平台红色提示** |
+
+### 11.4 AI 主动消息（POST /api/ai/active）
+
+| 用例 ID | 输入 | 预期 HTTP | 预期 WS 事件序列 | 预期 UI |
+|------|------|:---:|------|------|
+| TC-AI001 | `{"session_id":"douyin:..."}` | 200 | `ai_stream` × N 次 chunk 追加 → 最后一条 `done:true` | AI 按钮变灰"生成中..."→气泡逐字显示→结束后按钮恢复绿色 |
+| TC-AI002 | DeepSeek API Key 未配置 | 500 | 无 WS 流 | Toast "API Key 未配置，请在 AI 设置页填写" |
+| TC-AI003 | DeepSeek 网络超时 | 500 | 无 WS 流 | Toast "AI 服务超时，请检查网络" + 按钮恢复 |
+
+### 11.5 通讯录（GET /api/sessions）
+
+| 用例 ID | 输入 | 预期 HTTP | 预期响应 | 预期 UI |
+|------|------|:---:|------|------|
+| TC-S001 | 无参数 | 200 | `{"sessions":[...]}` | 通讯录列表按 `last_time` 降序排列 |
+| TC-S002 | `?platform=douyin` | 200 | 仅抖音会话 | 列表只显示抖音联系人 |
+| TC-S003 | 后端未启动（Godot 定时轮询时） | — | HTTP 超时 | 列表显示占位："后端未启动" + 重试按钮 |
+| TC-S004 | 0 个会话 | 200 | `{"sessions":[]}` | 通讯录显示空状态插画"暂无对话" |
+
+### 11.6 设置（GET/PUT /api/config）
+
+| 用例 ID | 输入 | 预期 HTTP | 预期响应 | 预期 UI |
+|------|------|:---:|------|------|
+| TC-C001 | GET | 200 | 完整 config JSON | 设置页各控件显示当前值 |
+| TC-C002 | `PUT {"theme":"light"}` | 200 | `{"ok":true}` | 全局 UI 瞬间切换浅色主题 |
+| TC-C003 | `PUT {"invalid_key":"x"}` | 400 | `{"error":"invalid_field"}` | Toast "未知配置项: invalid_key" |
+| TC-C004 | `PUT {"temperature":3.0}` | 400 | `{"error":"validation_error","detail":"temperature must be 0-2"}` | Toast "temperature 取值范围 0-2" |
+
+### 11.7 性能监控（GET /api/perf/snapshot + WS perf 推送）
+
+| 用例 ID | 输入 | 预期 | 预期 UI |
+|------|------|------|------|
+| TC-P001 | Godot 打开性能页 | WS 每秒收到 perf 事件 | 折线图实时刷新，数值标签更新 |
+| TC-P002 | 性能页切走（隐藏） | WS perf 事件仍然到达 | 图表节点 `queue_redraw()` 被抑制（Godot 自动跳过不可见节点的绘制） |
+| TC-P003 | 后端崩溃 | WS 断开 | 图表数据冻结，显示"已断开"遮罩层 |
+
+---
+
+## 12. 失败场景与降级策略
+
+### 12.1 网络超时
+
+**触发条件**: 任意 HTTP 请求 5 秒内无响应。
+
+**系统行为**:
+```
+Godot API.gd:
+  HTTPRequest.timeout = 5.0
+  超时 → 显示 Toast "网络请求超时，正在重试..."
+  → 每 3 秒重试一次，最多 3 次
+  → 3 次全部失败 → Toast "无法连接到后端，请检查 DMShoot 服务是否运行"
+  → 通讯录列表显示离线提示
+```
+
+**WebSocket 超时**:
+```
+WSClient.gd:
+  5 秒没收到 heartbeat → 主动关闭 WebSocket
+  → AppState 全局标记 backend_connected = false
+  → 所有页面顶部显示红色横幅"后端已断开，正在重连..."
+  → 每 2 秒尝试重连（指数退避: 2→4→8→16→30s，截断 30s）
+  → 重连成功 → 横幅消失，自动拉取最新状态（GET /api/adapter/status + GET /api/sessions）
+```
+
+### 12.2 后端崩溃
+
+**触发条件**: Python 进程异常退出（segfault / uncaught exception / OOM）。
+
+**系统行为**:
+```
+Launcher.exe:
+  subprocess.Popen 时设置监控线程
+  → 检测到 backend.exe 退出码 ≠ 0
+  → 自动重启 backend.exe（最多 3 次）
+  → 3 次全部崩溃 → 弹窗 "后端服务异常，DMShoot 将关闭" → Launcher 退出
+
+Godot 端:
+  WS 断开 → 同 12.1 的行为
+  → 如果 60 秒内未能重连 → 显示 "后端无响应，可能已崩溃" 
+  → 用户可点击"重启后端"按钮 → 通过 Launcher 重新拉起
+```
+
+### 12.3 数据库断连
+
+**触发条件**: SQLite 文件被删除 / 磁盘满 / WAL 损坏。
+
+**系统行为**:
+```
+后端 routes.py:
+  try: database.get_session()
+  except OperationalError as e:
+    → HTTP 500 { "error": "database_error", "detail": str(e) }
+    → 同时 WS 推送 { "event": "system_error", "type": "database" }
+
+Godot:
+  → 收到 500 → Toast "数据库异常，请检查磁盘空间或运行工具修复"
+  → WS 收到 system_error → 设置页显示红色警告横幅
+```
+
+**恢复策略**:
+```
+数据库检测到 WAL 文件损坏 → 自动执行:
+  1. 关闭所有写操作
+  2. 调用 tools/wal_checkpoint.py --force
+  3. 如果恢复失败 → 从 dmshoot.db.bak 恢复（如果有）
+  4. 如果备份也不存在 → 创建新数据库，记录到 log
+```
+
+### 12.4 认证过期
+
+**触发条件**: Cookie 过期被平台返回 -101 / 401。
+
+**系统行为**:
+```
+后端 adapter.py send_message():
+  API 返回 -101
+  → raise AuthExpiredError(platform, "Cookie 已过期")
+  → routes.py 捕获 → HTTP 400 { "error": "auth_expired" }
+  → 同时 WS 推送 { "event": "platform_status", "platform": "douyin", "status": "error", "detail": "Cookie 已过期" }
+
+Godot:
+  → HTTP 400 → Toast "[平台名] 登录已过期"
+  → WS 推送 → 侧边栏对应平台变 ❌
+  → 登录页对应平台的"自动登录"checkbox 被取消
+  → 平台连接状态文字变红 "Cookie 已过期，请重新扫码"
+```
+
+### 12.5 参数校验失败
+
+**触发条件**: 用户输入不合法、客户端 bug 导致发错字段。
+
+**系统行为**:
+```
+后端:
+  Pydantic BaseModel 自动校验
+  → HTTP 422 / 400
+  → Response body:
+    {
+      "error": "validation_error",
+      "detail": [{"loc": ["body","text"], "msg": "field required"}]
+    }
+
+Godot API.gd (封装层):
+  → 拦截所有 4xx 响应
+  → 解析 detail 数组
+  → 拼接为可读文案: "text: field required"
+  → Toast 显示完整错误信息
+  → 不会 crash，不会白屏
+```
+
+### 12.6 Godot 端错误边界
+
+| 场景 | 行为 |
+|------|------|
+| GDScript 运行时错误 (null access) | `push_error()` 写入 Godot 日志，UI 继续渲染（Godot 不会崩整个进程） |
+| HTTP 响应 JSON 解析失败 | `API.gd` fallback: 显示 "服务器返回异常数据" |
+| 一张图片 load 失败 | TextureRect 不显示，不影响其他 UI |
+| WS 收到未知 event 类型 | 静默忽略，写 WARN 日志 |
+| 内存不足 | Godot 自动调用 `queue_free()` 释放未使用资源 |
+
+---
+
+## 13. 日志规范
+
+### 13.1 日志级别定义
+
+| 级别 | 使用场景 | 示例 |
+|------|------|------|
+| **DEBUG** | 开发调试，生产默认关闭 | 请求原始参数、中间计算结果 |
+| **INFO** | 关键操作节点 | 请求到达、适配器启动、消息发送成功 |
+| **WARN** | 可恢复的异常 | 重试、降级、Cookie 即将过期（提前 1h 预警） |
+| **ERROR** | 需要人工关注 | API 失败、数据库异常、第三方服务不可用 |
+
+### 13.2 日志字段规范
+
+每条日志必须包含以下字段（后端使用 `logging` 模块的 `extra` 或结构化 JSON）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `req_id` | string | 请求唯一 ID（UUID4，从 HTTP 中间件注入） |
+| `platform` | string | 涉及平台，无则填 `"system"` |
+| `op` | string | 操作类型: `"adapter_start"\|"msg_send"\|"ai_gen"\|"login"\|"db_write"` |
+| `uid` | string | 涉及用户 UID，无则填 `"0"` |
+| `latency_ms` | number | 操作耗时（毫秒） |
+| `timestamp` | string | ISO 8601 格式 `2026-06-26T19:20:00.000+08:00` |
+
+### 13.3 日志格式模板
+
+```python
+# 后端统一日志格式
+logger.info(
+    "[%s] platform=%s op=%s uid=%s latency=%dms | %s",
+    req_id, platform, op, uid, latency_ms, message,
+    extra={"req_id": req_id, "platform": platform, "op": op, "uid": uid}
+)
+```
+
+### 13.4 各模块日志示例
+
+**适配器启动 (INFO)**
+```
+2026-06-26T19:20:01.234+08:00 INFO  dmshoot.api.routes
+  [rq_a1b2c3d4] platform=douyin op=adapter_start uid=0 latency=0ms | 正在启动 douyin 适配器 (auto_reply=True)
+```
+
+**适配器启动成功 (INFO)**
+```
+2026-06-26T19:20:03.567+08:00 INFO  dmshoot.api.routes
+  [rq_a1b2c3d4] platform=douyin op=adapter_start uid=7581349050324026405 latency=2333ms | douyin 适配器已启动, 昵称=柁炑炑
+```
+
+**消息发送成功 (INFO)**
+```
+2026-06-26T19:22:10.890+08:00 INFO  dmshoot.api.routes
+  [rq_e5f6g7h8] platform=douyin op=msg_send uid=1028742494552135 latency=3200ms | 消息已发送, 长度=18
+```
+
+**消息发送失败 (ERROR)**
+```
+2026-06-26T19:22:15.123+08:00 ERROR dmshoot.api.routes
+  [rq_e5f6g7h8] platform=douyin op=msg_send uid=1028742494552135 latency=520ms | 发送失败: auth_expired
+  Traceback (most recent call last):
+    ...
+    dmshoot.core.adapter.AuthExpiredError: Cookie 已过期
+```
+
+**API 请求到达 (INFO)**
+```
+2026-06-26T19:21:00.001+08:00 INFO  dmshoot.api.middleware
+  [rq_i9j0k1l2] platform=system op=http_request uid=0 latency=0ms | POST /api/message/send from 127.0.0.1
+```
+
+**API 请求完成 (INFO)**
+```
+2026-06-26T19:21:00.050+08:00 INFO  dmshoot.api.middleware
+  [rq_i9j0k1l2] platform=system op=http_request uid=0 latency=49ms | 200 OK (49ms)
+```
+
+**数据库写入 (DEBUG)**
+```
+2026-06-26T19:22:10.891+08:00 DEBUG dmshoot.storage.database
+  [rq_e5f6g7h8] platform=douyin op=db_write uid=1028742494552135 latency=1ms | INSERT chat_message (msg_hash=a3f8...)
+```
+
+**数据库异常 (ERROR)**
+```
+2026-06-26T19:25:00.000+08:00 ERROR dmshoot.storage.database
+  [rq_m3n4o5p6] platform=system op=db_write uid=0 latency=0ms | SQLite operational error: database is locked
+```
+
+**AI 生成完成 (INFO)**
+```
+2026-06-26T19:23:45.678+08:00 INFO  dmshoot.ai.backend
+  [rq_q7r8s9t0] platform=douyin op=ai_gen uid=1028742494552135 latency=5600ms | tokens=4708 model=deepseek-v4-flash
+```
+
+**WebSocket 重连 (WARN)**
+```
+2026-06-26T19:30:00.000+08:00 WARN  dmshoot.api.ws_bridge
+  [rq_---] platform=system op=ws_reconnect uid=0 latency=0ms | WebSocket 客户端断开，30秒内第2次重连
+```
+
+**登录扫码开始 (INFO)**
+```
+2026-06-26T19:20:00.000+08:00 INFO  dmshoot.api.routes
+  [rq_u1v2w3x4] platform=douyin op=login uid=0 latency=0ms | 启动扫码登录, Playwright 浏览器已打开
+```
+
+---
+
+## 14. 部署检查清单
+
+### 14.1 环境变量
+
+- [ ] `DMSHOOT_PORT` — 后端 HTTP 端口，默认 `9876`，不与已运行服务冲突
+- [ ] `DMSHOOT_DATA_DIR` — 数据库目录，默认 `./data/`，确保有读写权限
+- [ ] `DMSHOOT_LOG_LEVEL` — 日志级别，生产设为 `INFO`，调试可临时改 `DEBUG`
+- [ ] `DEEPSEEK_API_KEY` — AI Key，必须配置（不配置则 AI 功能不可用）
+- [ ] (可选) `NODE_PATH` — 手动指定 Node.js 路径，留空则自动发现
+
+### 14.2 依赖版本
+
+- [ ] Python `3.12.x`（与开发环境一致，避免 pyinstaller 兼容问题）
+- [ ] `fastapi==0.115.*`（API 框架）
+- [ ] `uvicorn==0.34.*`（ASGI 服务器）
+- [ ] `playwright==1.60.*` + `playwright install chromium`（浏览器已安装）
+- [ ] `requests==2.31.*`（http client）
+- [ ] `cryptography==48.*`（签名）
+- [ ] `PySide6>=6.5`（仅旧版需要，Godot 版可选）
+- [ ] PyInstaller `6.21.*`（打包工具）
+- [ ] Godot Engine `4.5`（Godot 前端需要）
+
+### 14.3 数据库
+
+- [ ] 首次运行自动创建 `data/dmshoot.db`（SQLite）
+- [ ] WAL 模式已启用（`database.py` 初始化时自动执行）
+- [ ] `wal_autocheckpoint=200` 已设置
+- [ ] 无旧版配置文件残留（v0.2.0 升级需迁移）
+- [ ] 备份：确保 `tools/wal_checkpoint.py` 可执行
+
+### 14.4 网络
+
+- [ ] 防火墙放行 `127.0.0.1:9876`（仅本地回环，不需外部访问）
+- [ ] 代理设置：如果使用系统代理，确保 `127.0.0.1` 不走代理（NoProxy）
+- [ ] DeepSeek API 可达：`curl -I https://api.deepseek.com` 返回 200
+
+### 14.5 Godot 导出配置
+
+- [ ] `display/window/size/viewport_width` = `960`
+- [ ] `display/window/size/viewport_height` = `680`
+- [ ] `display/window/size/resizable` = `true`
+- [ ] `application/config/name` = `"DMShoot"`
+- [ ] `application/config/icon` = `res://assets/tujue.ico`
+- [ ] 导出模板：Windows Desktop (Runnable)，**不要勾选** "Embed Pck"
+
+### 14.6 启动测试
+
+- [ ] `Launcher.exe` 双击能启动后端（任务管理器可见 `backend.exe`）
+- [ ] `backend.exe` 启动后 3 秒内 HTTP `200` on `/api/health`
+- [ ] `Godot.exe` 启动后 2 秒内 WS 连接成功
+- [ ] 关闭 Godot 窗口 → `backend.exe` 也自动退出
+- [ ] 重启后端 → Godot 自动重连（无需手动刷新）
+
+### 14.7 回滚方案
+
+- [ ] 保留旧版 PySide6 `main.py`（不删除，不覆盖）
+- [ ] Git tag `v0.2.0-legacy` 指向最后一个 PySide6 版本
+- [ ] 旧版 exe 备份：`DMShoot-v0.2.0.exe` 保存在 release assets
+- [ ] 若 Godot 版严重 bug → 用户可下载 `v0.2.0` 继续使用
+- [ ] 数据库向后兼容：Godot 版不修改 schema，可直接被 PySide6 版读取
+
+### 14.8 监控与告警
+
+- [ ] 后端健康检查端点：`GET /api/health` → `{"ok":true,"uptime":12345}`
+- [ ] Godot 端心跳日志：每 30 秒打印一次 `WS heartbeat OK`
+- [ ] 崩溃监控：`backend.exe` 退出码 ≠ 0 时 `Launcher.exe` 写 `crash.log`
+- [ ] (可选) 集成 Sentry 或自定义 webhook 上报 ERROR 日志
+
+### 14.9 分发前自测
+
+- [ ] 新安装流程：解压 zip → 双击 `Launcher.exe` → Godot 窗口出现 → 扫码登录 → 发一条消息
+- [ ] 从 v0.2.0 升级：旧版数据库被新版识别，会话列表正常加载
+- [ ] 断网测试：拔网线 → Godot 显示"后端已断开" → 插回网线 → 自动恢复
+- [ ] 杀后端测试：任务管理器结束 `backend.exe` → Launcher 自动重启 → Godot 自动重连
+- [ ] 长时间运行：挂机 2 小时无内存泄漏（内存增长 < 10MB）
+
+### 14.10 文档交付
+
+- [ ] README.md 更新下载链接为 v0.3.0
+- [ ] 用户手册：扫码登录步骤截图
+- [ ] 故障排查：常见错误码对照表（-101 / auth_expired / rate_limited ...）
+- [ ] API 文档：本文件 §2 的内容同步到 Godot 项目内的 `API_REFERENCE.md`
+
+---
+
+## 15. 文档变更记录
+
+| 版本 | 日期 | 修改人 | 修改内容 | 修改原因 |
+|------|------|------|------|------|
+| v1.0 | 2026-06-26 | 助手 | 初稿：架构对比、API 设计、时间估算、风险分析 | 立项可行性评估 |
+| v1.1 | 2026-06-26 | 助手 | 补充 §5 性能监控图表方案 | 明确 Godot 手绘替代 QPainter 的可行性 |
+| v1.2 | 2026-06-26 | 助手 | 新增 §11 验收用例（7 模块 25 条用例） | 定义交付标准 |
+| v1.2 | 2026-06-26 | 助手 | 新增 §12 失败场景（6 场景含降级策略） | 明确系统容错边界 |
+| v1.2 | 2026-06-26 | 助手 | 新增 §13 日志规范（4 级别 + 6 字段 + 11 示例） | 统一前后端日志格式 |
+| v1.2 | 2026-06-26 | 助手 | 新增 §14 部署检查清单（10 类 45 检查项） | 生产就绪交付标准 |
+| v1.2 | 2026-06-26 | 助手 | 新增 §15 文档变更记录 | 文档版本管理 |
+
+---
+
+> **文档状态**: 待评审  
+> **下一步**: 用户确认方案可行 → 启动 MVP 开发（§10 第一步）  
+> **关联文档**: `docs/WAL_CHECKPOINT_SOLUTION.md`, `DEV_NOTES.md`
