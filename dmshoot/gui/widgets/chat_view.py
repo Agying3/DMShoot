@@ -294,6 +294,12 @@ class ChatView(QWidget):
                 if isinstance(w, BubbleWidget):
                     w.deleteLater()
                     break
+        # 分隔线
+        if bubble_count > 0:
+            sep = QLabel()
+            sep.setFixedHeight(1)
+            sep.setStyleSheet("background: rgba(255,255,255,0.05); margin: 4px 12px;")
+            self.bubble_layout.insertWidget(self.bubble_layout.count() - 1, sep)
         self.bubble_layout.insertWidget(self.bubble_layout.count() - 1, BubbleWidget(message))
         from PySide6.QtCore import QTimer
         QTimer.singleShot(60, self._smart_scroll)
