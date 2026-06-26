@@ -153,11 +153,14 @@ def generate_req_sign(data: str, private_key_pem: str) -> str:
     纯 Python 实现（cryptography 库），无需 Node.js。
     
     Args:
-        data: 待签名字符串
+        data: 待签名字符串或 dict（proto builder 可能传 dict）
         private_key_pem: PEM 格式的 ECDSA 私钥
     Returns:
         Base64 编码的 DER 签名
     """
+    import json as _json
+    if isinstance(data, dict):
+        data = _json.dumps(data, separators=(',', ':'), ensure_ascii=False)
     key = serialization.load_pem_private_key(
         private_key_pem.encode(), password=None
     )
