@@ -24,7 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger("dmshoot.headless")
 
 # ── 数据库 ──
-from dmshoot.storage.database import init_db, load_or_create_config
+from dmshoot.storage.database import init_database, load_config
 
 # ── 核心组件 ──
 from dmshoot.core.bus import get_bus
@@ -44,8 +44,8 @@ async def main():
 
     # ── 初始化核心组件 ──
     logger.info("初始化数据库...")
-    init_db()
-    config = load_or_create_config()
+    init_database()
+    config = load_config()
 
     logger.info("初始化 AI...")
     init_ai(config)
