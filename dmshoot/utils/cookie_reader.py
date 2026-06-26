@@ -54,6 +54,8 @@ async def _extract_ticket_from_cookies(page) -> Optional[str]:
 async def _login_douyin(account_file: str, on_qr_callback=None) -> Optional[dict]:
     """
     抖音扫码登录，返回 {cookie, web_protect, keys} 或 None。
+    流程: www.douyin.com 扫码 → 登录成功后转 creator 拿 localStorage → 合并 cookie
+
     account_file: 用于保存二维码图片的路径
     on_qr_callback(b64_data_url): 收到二维码时调用
     """
@@ -78,15 +80,25 @@ async def _login_douyin(account_file: str, on_qr_callback=None) -> Optional[dict
             context = await browser.new_context(viewport={"width": 1280, "height": 720})
             page = await context.new_page()
 
-            await page.goto("https://creator.douyin.com/", timeout=60000, wait_until="domcontentloaded")
+            # ── 阶段1: www.douyin.com 扫码登录 ──
+            await page.goto("https://www.douyin.com/", timeout=60000, wait_until="domcontentloaded")
+            await asyncio.sleep(2)
 
-            # 点击扫码登录tab
             _qr_sent = False
             try:
-                scan_tab = page.get_by_text("扫码登录", exact=True).first
-                await scan_tab.wait_for(timeout=10000)
-                await scan_tab.click()
-                _clog.info("Waiting for QR code...")
+                # 点击登录按钮
+                for sel in ['button:has-text("登录")', '[class*="login"] button',
+                            'text=登录', '.login-btn']:
+                    try:
+                        login_btn = page.locator(sel).first
+                        if await login_btn.is_visible(timeout=3000):
+                            await login_btn.click()
+                            await asyncio.sleep(2)
+                            break
+                    except Exception:
+                        continue
+
+                _clog.info("Waiting for QR code on www.douyin.com...")
                 qr_selectors = [
                     'img[aria-label="二维码"]',
                     'img[alt*="二维码"]',
@@ -117,7 +129,7 @@ async def _login_douyin(account_file: str, on_qr_callback=None) -> Optional[dict
             except Exception:
                 pass  # 可能已在扫码页
 
-            # ── QR 已发给 GUI，现在最小化浏览器 ──
+            # ── QR 已发给 GUI，最小化浏览器 ──
             if _qr_sent:
                 try:
                     cdp = await page.context.new_cdp_session(page)
@@ -131,21 +143,24 @@ async def _login_douyin(account_file: str, on_qr_callback=None) -> Optional[dict
                 except Exception:
                     pass
 
-            # 等待登录完成（轮询检测，每秒检查）
+            # ── 等待登录完成 ──
             _verify_restored = False
+            _login_done = False
             for _ in range(160):
                 await asyncio.sleep(1)
                 current_url = page.url
 
-                # 二维码消失 + 没登录成功 = 需要验证 → 恢复浏览器
+                # 二维码消失 + 没登录成功 → 恢复浏览器（验证页）
                 if not _verify_restored:
                     qr_still = False
                     try:
                         qr_still = await page.locator('img[aria-label="二维码"]').first.count() > 0
                     except Exception:
                         pass
-                    if not qr_still and not current_url.startswith("https://creator.douyin.com/creator-micro/home"):
-                        _clog.info(f"验证/跳转页，恢复浏览器: {current_url}")
+                    # www.douyin.com 登录成功的标志: URL 变成主页 (非 login 页)
+                    logged_in = "www.douyin.com" in current_url and "/login" not in current_url and "passport" not in current_url
+                    if not qr_still and not logged_in:
+                        _clog.info(f"验证/跳转，恢复浏览器: {current_url}")
                         try:
                             cdp = await page.context.new_cdp_session(page)
                             win_info = await cdp.send("Browser.getWindowForTarget")
@@ -159,123 +174,100 @@ async def _login_douyin(account_file: str, on_qr_callback=None) -> Optional[dict
                             pass
                         _verify_restored = True
 
-                # 判断是否登录成功：URL 变成创作者中心首页，且没有登录元素
-                if current_url.startswith("https://creator.douyin.com/creator-micro/home"):
-                    # 进一步确认没有登录表单
+                # www.douyin.com 登录成功
+                if "www.douyin.com" in current_url and "/login" not in current_url and "passport" not in current_url:
                     try:
-                        still_login = await page.get_by_text("扫码登录", exact=True).first.is_visible()
+                        still_login = page.get_by_text("登录").first
+                        still_vis = await still_login.is_visible()
                     except Exception:
-                        still_login = False
-                    if not still_login:
-                        # 在 creator.douyin.com 提取 localStorage (IM protobuf 必需)
-                        import logging
-                        _clog = logging.getLogger("cookie_reader")
-                        web_protect = ""
-                        keys_val = ""
-                        try:
-                            # keys: 从 security-sdk 获取 ec_privateKey
-                            crypt_raw = await page.evaluate(
-                                "() => localStorage.getItem('security-sdk/s_sdk_crypt_sdk')"
-                            ) or ""
-                            if crypt_raw:
-                                keys_val = crypt_raw  # 格式: {"data": "{\"ec_privateKey\": \"...\"}"}
+                        still_vis = False
+                    if not still_vis:
+                        _login_done = True
+                        _clog.info("www.douyin.com 登录成功")
+                        break
 
-                            # web_protect: 扫描 localStorage security-sdk key
-                            all_keys = await page.evaluate("() => Object.keys(localStorage)")
-                            _clog.debug(f"localStorage keys: {all_keys}")
-                            web_protect = ""
-                            keys_val = ""
-                            # 方法1: dump 所有 security-sdk 系 key 的值（诊断用）
-                            for k in all_keys:
-                                if "security-sdk" in k or "sdk_sign" in k:
-                                    v = await page.evaluate(f"() => localStorage.getItem('{k}')") or ""
-                                    _clog.info(f"[{k}] len={len(v)}, preview={v[:300]}")
-                                    if v and '"ticket"' in v:
-                                        web_protect = v
-                                        _clog.info(f"web_protect found in {k}")
-                                        break
-                            # 方法2: 扫描所有 key
-                            if not web_protect:
-                                for k in all_keys:
-                                    v = await page.evaluate(f"() => localStorage.getItem('{k}')") or ""
-                                    if v and '"ticket"' in v and '"ts_sign"' in v:
-                                        web_protect = v
-                                        _clog.info(f"web_protect found in key: {k}")
-                                        break
-                            # 方法3: 从 ztsdk_tcc_config 构建
-                            if not web_protect:
-                                tcc_raw = await page.evaluate(
-                                    "() => localStorage.getItem('ztsdk_tcc_config')"
-                                ) or ""
-                                if tcc_raw:
-                                    _clog.info(f"ztsdk_tcc_config: {tcc_raw[:300]}")
-                                    import json
-                                    try:
-                                        tcc = json.loads(tcc_raw)
-                                        cfg = tcc.get("value", {}).get("ztsdk_config", {})
-                                        _clog.info(f"ztsdk_config keys: {list(cfg.keys())}")
-                                        for items in cfg.values():
-                                            for item in items if isinstance(items, list) else []:
-                                                scene = item.get("scene", "")
-                                                _clog.info(f"ztsdk scene: {scene}")
-                                                if scene == "web_protect":
-                                                    # certType=cookie → ticket 在 cookie 里，稍后在 douyin.com 提取
-                                                    wp_data = {
-                                                        "ticket": item.get("ticket", item.get("token", "")),
-                                                        "ts_sign": item.get("ts_sign", ""),
-                                                        "client_cert": item.get("client_cert", item.get("cert", "")),
-                                                    }
-                                                    if wp_data["ticket"]:
-                                                        web_protect = json.dumps({"data": json.dumps(wp_data)})
-                                                    break
-                                    except Exception:
-                                        pass
-                            if not web_protect:
-                                _clog.info("web_protect 未在 localStorage，将尝试 cookie 提取")
-                        except Exception:
-                            pass
+            if not _login_done:
+                _clog.warning("登录超时")
+                await browser.close()
+                return None
 
-                        # 补充访问 www.douyin.com 获取 s_v_web_id + ticket cookie
-                        try:
-                            await page.goto("https://www.douyin.com/", timeout=30000, wait_until="domcontentloaded")
-                            await asyncio.sleep(3)  # 等 SDK 初始化完
-                        except Exception:
-                            pass
-                        cookies = await context.cookies()
-                        cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
+            # ── 阶段2: 访问 creator.douyin.com 拿 localStorage ──
+            await page.goto("https://creator.douyin.com/creator-micro/home",
+                          timeout=30000, wait_until="domcontentloaded")
+            await asyncio.sleep(3)
 
-                        # douyin 新版将 web_protect 数据存于 _bd_ticket_crypt_cookie
-                        if not web_protect:
-                            import json as _json
-                            for c in cookies:
-                                if c.get("name") == "_bd_ticket_crypt_cookie" and c.get("value"):
-                                    wp_data = {"ticket": c["value"], "ts_sign": "", "client_cert": ""}
-                                    web_protect = _json.dumps({"data": _json.dumps(wp_data)})
-                                    _clog.info("web_protect extracted from _bd_ticket_crypt_cookie")
-                                    break
-                                    break
-                        if not web_protect:
-                            _clog.warning("ticket 仍为空，所有来源均未找到")
+            # 提取 localStorage (IM protobuf 必需)
+            web_protect = ""
+            keys_val = ""
+            try:
+                all_keys = await page.evaluate("() => Object.keys(localStorage)")
+                _clog.debug(f"localStorage keys: {all_keys}")
 
-                        await browser.close()
-                        return {
-                            "cookie": cookie_str,
-                            "web_protect": web_protect,
-                            "keys": keys_val,
-                        }
+                # 扫描 web_protect (ticket)
+                for k in all_keys:
+                    if "security-sdk" in k or "sdk_sign" in k:
+                        v = await page.evaluate(f"() => localStorage.getItem('{k}')") or ""
+                        if v and '"ticket"' in v:
+                            web_protect = v
+                            _clog.info(f"web_protect found in {k}")
+                            break
+                if not web_protect:
+                    for k in all_keys:
+                        v = await page.evaluate(f"() => localStorage.getItem('{k}')") or ""
+                        if v and '"ticket"' in v and '"ts_sign"' in v:
+                            web_protect = v
+                            _clog.info(f"web_protect found in key: {k}")
+                            break
 
-                # 二维码过期 → 刷新
-                try:
-                    expired = page.get_by_text("二维码失效", exact=True).locator("..").first
-                    if await expired.count() and await expired.is_visible():
-                        await expired.click()
-                        await asyncio.sleep(1)
-                except Exception:
-                    pass
+                # keys: ec_privateKey
+                crypt_raw = await page.evaluate(
+                    "() => localStorage.getItem('security-sdk/s_sdk_crypt_sdk')"
+                ) or ""
+                if crypt_raw:
+                    keys_val = crypt_raw
+
+                # 兜底: _bd_ticket_crypt_cookie
+                if not web_protect:
+                    for k in all_keys:
+                        if "bd_ticket" in k or "tcc" in k:
+                            v = await page.evaluate(f"() => localStorage.getItem('{k}')") or ""
+                            _clog.info(f"[{k}] preview: {v[:300]}")
+            except Exception:
+                pass
+
+            # ── 阶段3: 回到 www.douyin.com 确保 cookie 完整 ──
+            await page.goto("https://www.douyin.com/", timeout=30000, wait_until="domcontentloaded")
+            await asyncio.sleep(3)
+
+            # 合并所有域 cookie
+            all_cookies = await context.cookies()
+            # 去重: 同名 cookie 取最后一个（一般是 www 的覆盖 creator 的）
+            seen = {}
+            for c in all_cookies:
+                name = c.get("name", "")
+                if name:
+                    seen[name] = f"{name}={c['value']}"
+            cookie_str = "; ".join(seen.values())
+
+            # 兜底: 从 cookie 中提取 web_protect
+            if not web_protect:
+                import json as _json
+                for c in all_cookies:
+                    if c.get("name") == "_bd_ticket_crypt_cookie" and c.get("value"):
+                        wp_data = {"ticket": c["value"], "ts_sign": "", "client_cert": ""}
+                        web_protect = _json.dumps({"data": _json.dumps(wp_data)})
+                        _clog.info("web_protect from cookie")
+                        break
 
             await browser.close()
-            return None
-    except Exception:
+            return {
+                "cookie": cookie_str,
+                "web_protect": web_protect,
+                "keys": keys_val,
+            }
+
+    except Exception as e:
+        _clog.error(f"抖音登录异常: {e}")
         return None
 
 
