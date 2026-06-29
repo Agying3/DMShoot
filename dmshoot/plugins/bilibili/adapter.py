@@ -10,7 +10,7 @@ from typing import Optional
 
 from dmshoot.core.adapter import BaseAdapter, ErrorCategory, ReconnectBackoff
 from dmshoot.core.message import Message
-from dmshoot.utils.console_log import get_logger
+from dmshoot.utils.console_log import get_logger, is_log_enabled
 
 logger = get_logger(__name__)
 
@@ -341,7 +341,8 @@ class BilibiliAdapter(BaseAdapter):
             sessions = data.get("session_list", [])
             total_unread = sum(s.get("unread_count", 0) for s in sessions)
             if total_unread > 0:
-                logger.info(f"B站轮询: {len(sessions)}会话, 未读={total_unread}")
+                if is_log_enabled("polling"):
+                    logger.info(f"B站轮询: {len(sessions)}会话, 未读={total_unread}")
 
             # asyncio.gather 并发拉取
             async def poll_one(s):
@@ -415,15 +416,17 @@ class BilibiliAdapter(BaseAdapter):
             err_str = str(e)
             if "-101" in err_str or "未登录" in err_str:
                 self.on_error(ErrorCategory.AUTH, f"Cookie 已过期: {e}", e)
-                # 认证失败，断开连接让用户重新登录
                 self._running = False
                 return
+            if "-509" in err_str or "请求过于频繁" in err_str:
+                # 限流错误：抛出让外层退避，不在此处标记网络错误
+                raise
             self.on_error(ErrorCategory.NETWORK, f"单次轮询异常: {e}", e)
             await self._sleep(5)
             from dmshoot.core.perf_monitor import get_monitor
             get_monitor().record_api(0, is_error=True)
         else:
-            await self._sleep(3)
+            await self._sleep(10)
             _elapsed = (_time.perf_counter() - _start) * 1000
             from dmshoot.core.perf_monitor import get_monitor
             get_monitor().record_api(_elapsed)

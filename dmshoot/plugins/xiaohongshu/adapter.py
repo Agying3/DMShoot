@@ -19,7 +19,7 @@ from typing import Optional
 from dmshoot.core.adapter import BaseAdapter
 from dmshoot.core.message import Message
 from dmshoot.plugins.xiaohongshu.im_client import XHSIMClient
-from dmshoot.utils.console_log import get_logger
+from dmshoot.utils.console_log import get_logger, is_log_enabled
 
 logger = get_logger(__name__)
 
@@ -401,7 +401,8 @@ class XHSAdapter(BaseAdapter):
             if new_count > 0:
                 self._state["replied"] = list(self._replied)[-5000:]
                 _save_state(self._state)
-                logger.info(f"小红书轮询: {new_count}条新消息")
+                if is_log_enabled("polling"):
+                    logger.info(f"小红书轮询: {new_count}条新消息")
 
         except Exception as e:
             logger.warning(f"小红书轮询异常: {e}")

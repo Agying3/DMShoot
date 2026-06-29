@@ -1,66 +1,135 @@
-"""消息总线 — 所有模块通过信号槽通信"""
+"""消息总线 — 所有模块通过信号槽通信
+
+GUI 模式: 使用 Qt Signal (线程安全, 跨线程自动队列化)
+Headless 模式: 使用纯 Python Signal (无 PySide6 依赖)
+"""
 
 import threading
-from typing import Callable, Optional
-from PySide6.QtCore import QObject, Signal
+import logging
+from typing import Callable, Optional, Any
 
 from dmshoot.core.message import Message
 
+logger = logging.getLogger("dmshoot.core.bus")
+
+# ── 检测是否可用 Qt Signal ──
+try:
+    from PySide6.QtCore import QObject, Signal as QtSignal
+    _HAS_QT = True
+except ImportError:
+    _HAS_QT = False
+
+
+# ── 纯 Python Signal（无 Qt 依赖）─────────────────────────────
+
+class _PySignal:
+    def __init__(self, *arg_types):
+        self._slots: list[Callable] = []
+        self._arg_types = arg_types
+
+    def connect(self, slot: Callable) -> None:
+        if slot not in self._slots:
+            self._slots.append(slot)
+
+    def disconnect(self, slot: Callable) -> None:
+        if slot in self._slots:
+            self._slots.remove(slot)
+
+    def emit(self, *args) -> None:
+        for slot in self._slots:
+            try:
+                slot(*args)
+            except Exception:
+                logger.exception("Signal slot error")
+
+    def disconnect_all(self) -> None:
+        self._slots.clear()
+
+
+# ── 平台状态枚举 ──────────────────────────────────────────────
 
 class PlatformStatus:
-    """平台连接状态"""
     OFFLINE = "offline"
     CONNECTING = "connecting"
     ONLINE = "online"
     ERROR = "error"
 
 
-class MessageBus(QObject):
-    """
-    全局事件中枢
-    GUI 和各 Adapter 只跟 Bus 说话，互相不直接耦合
-    """
+# ── 实现类（按是否有 Qt 分两套）───────────────────────────────
 
-    # 有新消息到达
-    new_message = Signal(Message)
+if _HAS_QT:
 
-    # 需要向平台发送回复
-    send_reply = Signal(str, str, str)  # platform, session_id, text
+    class _QtMessageBus(QObject):
+        """GUI 模式：Qt Signal (类级定义，线程安全)"""
+        new_message = QtSignal(Message)
+        send_reply = QtSignal(str, str, str)
+        platform_status = QtSignal(str, str, str)
+        log = QtSignal(str, str, str)
+        ai_request = QtSignal(Message)
+        ai_response = QtSignal(str, str, str)
 
-    # 平台连接状态变化
-    platform_status = Signal(str, str, str)  # platform, status, msg
+        _instance: Optional["_QtMessageBus"] = None
+        _lock = threading.Lock()
 
-    # 日志输出
-    log = Signal(str, str, str)  # level, platform, message
+        @classmethod
+        def instance(cls) -> "_QtMessageBus":
+            if cls._instance is None:
+                with cls._lock:
+                    if cls._instance is None:
+                        cls._instance = cls()
+            return cls._instance
 
-    # AI回复请求
-    ai_request = Signal(Message)
+        def emit_message(self, msg: Message):
+            self.log.emit("INFO", msg.platform, f"[{msg.sender_name}] {msg.content[:50]}")
+            self.new_message.emit(msg)
 
-    # AI回复结果
-    ai_response = Signal(str, str, str)  # session_id, reply_text, model
+        def request_reply(self, platform: str, session_id: str, text: str):
+            self.send_reply.emit(platform, session_id, text)
 
-    _instance: Optional["MessageBus"] = None
-    _lock = threading.Lock()
+        def set_platform_status(self, platform: str, status: str, msg: str = ""):
+            self.platform_status.emit(platform, status, msg)
+            self.log.emit("INFO", platform, f"状态变更: {status} {msg}")
 
-    @classmethod
-    def instance(cls) -> "MessageBus":
-        """线程安全单例"""
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = cls()
-        return cls._instance
+    MessageBus = _QtMessageBus
 
-    def emit_message(self, msg: Message):
-        """有新消息时调用"""
-        self.log.emit("INFO", msg.platform, f"[{msg.sender_name}] {msg.content[:50]}")
-        self.new_message.emit(msg)
+else:
 
-    def request_reply(self, platform: str, session_id: str, text: str):
-        """请求向平台发送回复"""
-        self.send_reply.emit(platform, session_id, text)
+    class _PyMessageBus:
+        new_message: _PySignal
+        send_reply: _PySignal
+        platform_status: _PySignal
+        log: _PySignal
+        ai_request: _PySignal
+        ai_response: _PySignal
 
-    def set_platform_status(self, platform: str, status: str, msg: str = ""):
-        """更新平台状态"""
-        self.platform_status.emit(platform, status, msg)
-        self.log.emit("INFO", platform, f"状态变更: {status} {msg}")
+        _instance: Optional["_PyMessageBus"] = None
+        _lock = threading.Lock()
+
+        def __init__(self):
+            self.new_message = _PySignal(Message)
+            self.send_reply = _PySignal(str, str, str)
+            self.platform_status = _PySignal(str, str, str)
+            self.log = _PySignal(str, str, str)
+            self.ai_request = _PySignal(Message)
+            self.ai_response = _PySignal(str, str, str)
+
+        @classmethod
+        def instance(cls) -> "_PyMessageBus":
+            if cls._instance is None:
+                with cls._lock:
+                    if cls._instance is None:
+                        cls._instance = cls()
+            return cls._instance
+
+        def emit_message(self, msg: Message):
+            self.log.emit("INFO", msg.platform, f"[{msg.sender_name}] {msg.content[:50]}")
+            self.new_message.emit(msg)
+
+        def request_reply(self, platform: str, session_id: str, text: str):
+            self.send_reply.emit(platform, session_id, text)
+
+        def set_platform_status(self, platform: str, status: str, msg: str = ""):
+            self.platform_status.emit(platform, status, msg)
+            self.log.emit("INFO", platform, f"状态变更: {status} {msg}")
+
+    MessageBus = _PyMessageBus

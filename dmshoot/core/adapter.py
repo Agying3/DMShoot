@@ -2,9 +2,34 @@
 
 import time
 import enum
+import threading
 from typing import Optional
 
-from PySide6.QtCore import QThread
+# ── 条件导入: headless 模式下不依赖 PySide6 ──
+try:
+    from PySide6.QtCore import QThread as _ThreadBase
+    _is_qt_thread = True
+except ImportError:
+    _is_qt_thread = False
+
+    class _ThreadBase(threading.Thread):
+        """纯 Python Thread, 兼容 QThread 的 quit/wait/terminate 接口"""
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self._thread_running = True
+
+        def isRunning(self) -> bool:
+            return self.is_alive()
+
+        def quit(self):
+            self._thread_running = False
+
+        def terminate(self):
+            pass  # Python Thread 无法强制终止
+
+        def wait(self, timeout_ms: int = 0) -> bool:
+            self.join(timeout=timeout_ms / 1000.0)
+            return not self.is_alive()
 
 from dmshoot.core.bus import MessageBus, PlatformStatus
 from dmshoot.core.message import Message
@@ -23,10 +48,11 @@ class ErrorCategory(enum.Enum):
     INTERNAL = "internal"  # 代码 bug / 解析错误（需修复）
 
 
-class BaseAdapter(QThread):
+class BaseAdapter(_ThreadBase):
     """
     所有平台适配器的基类
-    继承 QThread 保证每个平台独立线程运行
+    GUI 模式: 继承 QThread, 每个平台独立线程运行
+    Headless 模式: 继承 threading.Thread, 无 PySide6 依赖
     """
 
     platform_name: str = "unknown"
