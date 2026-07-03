@@ -224,7 +224,7 @@ def setup_console_logging(level: int = logging.DEBUG):
         backupCount=5,
         encoding="utf-8",
     )
-    fh.setLevel(level)
+    fh.setLevel(logging.INFO)
     fh.setFormatter(logging.Formatter(
         "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",

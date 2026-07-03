@@ -342,7 +342,7 @@ class BilibiliAdapter(BaseAdapter):
             total_unread = sum(s.get("unread_count", 0) for s in sessions)
             if total_unread > 0:
                 if is_log_enabled("polling"):
-                    logger.info(f"B站轮询: {len(sessions)}会话, 未读={total_unread}")
+                    logger.debug(f"B站轮询: {len(sessions)}会话, 未读={total_unread}")
 
             # asyncio.gather 并发拉取
             async def poll_one(s):

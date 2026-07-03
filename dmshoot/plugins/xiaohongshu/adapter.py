@@ -402,7 +402,7 @@ class XHSAdapter(BaseAdapter):
                 self._state["replied"] = list(self._replied)[-5000:]
                 _save_state(self._state)
                 if is_log_enabled("polling"):
-                    logger.info(f"小红书轮询: {new_count}条新消息")
+                    logger.debug(f"小红书轮询: {new_count}条新消息")
 
         except Exception as e:
             logger.warning(f"小红书轮询异常: {e}")
