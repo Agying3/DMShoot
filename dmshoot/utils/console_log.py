@@ -48,7 +48,10 @@ _RICH_THEME = Theme({
     "recv.platform": "magenta",
 })
 
-_console = Console(theme=_RICH_THEME, highlight=False)
+_console_stream = sys.stdout if hasattr(sys.stdout, "write") else open(
+    os.devnull, "w", encoding="utf-8"
+)
+_console = Console(theme=_RICH_THEME, highlight=False, file=_console_stream)
 
 # ── 自定义日志级别 ──
 SUCCESS = 25
@@ -211,9 +214,10 @@ def setup_console_logging(level: int = logging.DEBUG):
     root.setLevel(level)
     root.handlers.clear()
 
-    # Rich 终端 handler
-    rh = RichHandler(level=level)
-    root.addHandler(rh)
+    # pythonw / PyInstaller windowed 模式没有 stdout，只保留文件日志。
+    if hasattr(sys.stdout, "write"):
+        rh = RichHandler(level=level)
+        root.addHandler(rh)
 
     # 文件 handler（5MB × 5 个备份）
     log_dir = Path(__file__).parent.parent.parent / "logs"

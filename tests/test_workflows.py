@@ -273,6 +273,31 @@ class TestMessageHistory:
         unread = next((s.unread_count for s in sessions if s.session_id == sid), None)
         assert unread == 0
 
+    def test_incoming_message_uses_one_deduplicated_transaction(self, temp_db):
+        """入站消息只递增一次未读，重复推送不重复写入。"""
+        from dmshoot.storage import database
+        from dmshoot.storage.models import ChatMessage, SessionRecord
+
+        sid = "test:incoming"
+        session = SessionRecord(
+            session_id=sid, platform="test", peer_name="User", peer_id="1",
+            last_message="hello", last_time=1000,
+        )
+        msg = ChatMessage(
+            session_id=sid, sender_name="User", sender_id="1",
+            content="hello", timestamp=1000,
+        )
+
+        inserted, unread = database.save_incoming_message(session, msg)
+        duplicate, duplicate_unread = database.save_incoming_message(session, msg)
+
+        assert inserted is True
+        assert unread == 1
+        assert duplicate is False
+        assert duplicate_unread == -1
+        assert database.get_sessions("test")[0].unread_count == 1
+        assert len(database.get_messages(sid)) == 1
+
 
 # ═══════════════════════════════════════════════════════════
 # 5. B站异步轮询 — asyncio.gather 并发

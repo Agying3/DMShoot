@@ -3,6 +3,7 @@ cd /d "%~dp0"
 
 if exist ".venv\Scripts\python.exe" (
     set "PYTHON=.venv\Scripts\python.exe"
+    set "PYTHONW=.venv\Scripts\pythonw.exe"
 ) else (
     echo [ERROR] No venv found. Run setup.bat first.
     pause
@@ -19,18 +20,10 @@ if %errorlevel% neq 0 (
     )
 )
 
-echo ============================================
-echo   DMShoot
-echo ============================================
-
-if exist "dmshoot-go\msg-service.exe" (
-    echo Starting Go msg-service...
-    start "" /B "dmshoot-go\msg-service.exe"
-    timeout /t 2 >nul
+if /I "%~1"=="--console" (
+    "%PYTHON%" main.py
+    exit /b %errorlevel%
 )
 
-echo Starting GUI...
-"%PYTHON%" main.py
-
-echo Done.
-pause
+start "" "%PYTHONW%" "%~dp0main.py"
+exit /b 0

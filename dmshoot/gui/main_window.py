@@ -393,6 +393,8 @@ class MarkdownViewer(QDialog):
 class MainWindow(QMainWindow):
     # AI 连接测试结果信号（跨线程安全）
     _ai_test_result = QtSignal(bool, str)  # (成功, 消息)
+    _send_result = QtSignal(str, str, str, bool)  # session_id, platform, text, ok
+    _settings_ready = QtSignal()
 
     def __init__(self):
         super().__init__()
@@ -400,6 +402,11 @@ class MainWindow(QMainWindow):
         self.config = AppConfig()
         self._adapters: dict = {}
         self._closing = False  # 关闭标志，防止 QTimer 回调访问已销毁 widget
+        self._prompt_signals_bound = False
+        self._settings_class = None
+        self._settings_loading = False
+        self._settings_open_requested = False
+        self._settings_dialog = None
         self.plugins = PluginManager()
 
         self.setWindowFlags(Qt.FramelessWindowHint)
@@ -428,6 +435,8 @@ class MainWindow(QMainWindow):
         SignalWiring.connect_all(self, self._adapter_mgr, self._auth_ctrl)
         # AI 连接测试结果信号（跨线程安全）
         self._ai_test_result.connect(self._on_ai_test_result)
+        self._send_result.connect(self._on_send_result)
+        self._settings_ready.connect(self._on_settings_ready)
         logger.info("_connect_signals 完成")
         self._sync_config_to_ui()
         logger.info("_sync_config_to_ui 完成")
@@ -435,8 +444,9 @@ class MainWindow(QMainWindow):
         from dmshoot.utils.console_log import raw_title
         raw_title("  DMShoot 就绪 — 等待连接")
         QTimer.singleShot(100, lambda: self.sidebar.set_active("home"))
-        # 有 cookie 就自动登录
-        QTimer.singleShot(800, self._auth_ctrl.auto_login)
+        QTimer.singleShot(150, self._preload_settings)
+        # 认证控制器统一负责启动时的验证和监听，避免重复调度适配器
+        QTimer.singleShot(900, self._auth_ctrl.auto_login)
         # 通讯录右键菜单：AI主动发一句
         self.page_home.contacts.active_message_requested.connect(
             self._on_active_message_request
@@ -531,12 +541,15 @@ class MainWindow(QMainWindow):
 
     def _on_nav(self, key: str):
         if key == "settings":
-            from dmshoot.gui.settings_dialog import SettingsDialog
-            self._settings_dialog = SettingsDialog(self.config, self)
-            self._settings_dialog.cache_cleared.connect(self._on_cache_cleared)
-            self._settings_dialog.go_send_command.connect(self._on_go_send_command)
-            self._settings_dialog.finished.connect(lambda result: self._on_settings_closed(result))
-            self._settings_dialog.show()  # 非模态，主窗口可同时操作
+            if self._settings_dialog and self._settings_dialog.isVisible():
+                self._settings_dialog.raise_()
+                self._settings_dialog.activateWindow()
+                return
+            if self._settings_class is None:
+                self._settings_open_requested = True
+                self._preload_settings()
+                return
+            self._show_settings()
             return
         pages = {"home": 0, "login": 1, "deepseek": 2, "prompt": 3}
         self.stack.setCurrentIndex(pages.get(key, 0))
@@ -546,12 +559,57 @@ class MainWindow(QMainWindow):
         self._adapter_mgr.stop_from_ui(platform)
         QTimer.singleShot(500, lambda: self._adapter_mgr.start_from_ui(platform))
 
-    def _on_settings_closed(self, result: int):
+    def _preload_settings(self):
+        """后台预载设置模块；Qt 控件仍只在主线程创建。"""
+        if self._settings_class is not None or self._settings_loading:
+            return
+        self._settings_loading = True
+        import threading
+        threading.Thread(
+            target=self._load_settings_module,
+            name="settings-preload",
+            daemon=True,
+        ).start()
+
+    def _load_settings_module(self):
+        try:
+            from dmshoot.gui.settings_dialog import SettingsDialog
+            self._settings_class = SettingsDialog
+        except Exception:
+            logger.exception("设置模块预载失败")
+        finally:
+            self._settings_loading = False
+            try:
+                self._settings_ready.emit()
+            except RuntimeError:
+                pass
+
+    def _on_settings_ready(self):
+        if self._settings_open_requested and self._settings_class is not None:
+            self._settings_open_requested = False
+            self._show_settings()
+
+    def _show_settings(self):
+        dialog = self._settings_class(self.config, self)
+        self._settings_dialog = dialog
+        dialog.cache_cleared.connect(self._on_cache_cleared)
+        dialog.go_send_command.connect(self._on_go_send_command)
+        dialog.finished.connect(
+            lambda result, d=dialog: self._on_settings_closed(result, d)
+        )
+        dialog.show()
+
+    def _on_settings_closed(self, result: int, dialog=None):
         if result == QDialog.Accepted:
-            self.config = database.load_config()
+            latest = database.load_config()
+            for field_name in type(self.config).__dataclass_fields__:
+                setattr(self.config, field_name, getattr(latest, field_name))
             self._sync_config_to_ui()
             self._apply_wallpaper()
-        self.sidebar.set_active("home")
+        if dialog is not None:
+            dialog.deleteLater()
+            if self._settings_dialog is dialog:
+                self._settings_dialog = None
 
     def _on_go_send_command(self, data: dict):
         """Go 后端 WS 回传发消息指令 → 调用平台 adapter 实际发送"""
@@ -590,18 +648,17 @@ class MainWindow(QMainWindow):
             self.page_deepseek.set_status("未连接")
             self.sidebar.update_ai_status("✕")
 
-        if c.douyin_cookie:
-            self.page_login.set_status("douyin", "抖音 · 就绪")
-            self.sidebar.update_status("douyin", "—")
-        if c.bilibili_sessdata:
-            self.page_login.set_status("bilibili", "B站 · 就绪")
-            self.sidebar.update_status("bilibili", "—")
-        if c.xhs_cookie:
-            self.page_login.set_status("xiaohongshu", "小红书 · 就绪")
-            self.sidebar.update_status("xiaohongshu", "—")
-        if c.ks_cookie:
-            self.page_login.set_status("kuaishou", "快手 · 就绪")
-            self.sidebar.update_status("kuaishou", "—")
+        auth_state = [
+            ("douyin", bool(c.douyin_cookie), "抖音"),
+            ("bilibili", bool(c.bilibili_sessdata), "B站"),
+            ("xiaohongshu", bool(c.xhs_cookie), "小红书"),
+            ("kuaishou", bool(c.ks_cookie), "快手"),
+        ]
+        for platform, has_cookie, name in auth_state:
+            self.page_login.set_status(
+                platform, f"{name} · {'就绪' if has_cookie else '未登录'}"
+            )
+            self.sidebar.update_status(platform, "—" if has_cookie else "未登录")
 
         self.page_login.auto_monitor.setChecked(c.bilibili_auto_monitor)
         self.page_home._load_contacts()
@@ -624,24 +681,11 @@ class MainWindow(QMainWindow):
         self.page_prompt.load_behaviors(behavior_prompts, c.behavior_preset)
         if char_prompts:
             self.page_prompt.set_content(char_prompts.get(c.prompt_preset, ""))
-        self.page_prompt.prompt_changed.connect(
-            lambda name: self._on_prompt_change(name)
-        )
-        self.page_prompt.behavior_changed.connect(
-            lambda name: self._on_behavior_change(name)
-        )
-
-        # 自动连接：有 cookie 且未运行 → 自动启动
-        auto_connect = [
-            ("douyin", c.douyin_cookie, c.douyin_enabled),
-            ("bilibili", c.bilibili_sessdata, c.bilibili_enabled),
-            ("xiaohongshu", c.xhs_cookie, c.xhs_enabled),
-            ("kuaishou", c.ks_cookie, c.ks_enabled),
-        ]
-        for platform, cookie, enabled in auto_connect:
-            if cookie and not (platform in self._adapters) and enabled:
-                from PySide6.QtCore import QTimer
-                QTimer.singleShot(200, lambda p=platform: self._adapter_mgr.start_from_ui(p))
+        # 设置窗口保存后会再次同步配置，信号只需要绑定一次。
+        if not self._prompt_signals_bound:
+            self.page_prompt.prompt_changed.connect(self._on_prompt_change)
+            self.page_prompt.behavior_changed.connect(self._on_behavior_change)
+            self._prompt_signals_bound = True
 
     # ── 信号 ── (已迁移到 SignalWiring)
 
@@ -740,10 +784,14 @@ class MainWindow(QMainWindow):
         if not msg.content.strip():
             return
 
-        new_unread = -1  # 自己消息不增加未读
+        cm = ChatMessage(session_id=msg.session_id, sender_name=msg.sender_name,
+                         sender_id=msg.sender_id, content=msg.content, msg_type=msg.msg_type,
+                         is_self=msg.is_self, timestamp=msg.timestamp)
 
-        # 自己的消息不建会话
-        if not msg.is_self:
+        if msg.is_self:
+            inserted = database.save_message(cm)
+            new_unread = -1
+        else:
             session = SessionRecord(
                 session_id=msg.session_id,
                 platform=msg.platform,
@@ -752,14 +800,11 @@ class MainWindow(QMainWindow):
                 last_message=msg.content[:50],
                 last_time=msg.timestamp,
             )
-            database.upsert_session(session)
-            new_unread = database.increment_unread(msg.session_id)
+            inserted, new_unread = database.save_incoming_message(session, cm)
 
-        # 存消息（DB 层唯一索引自动去重）
-        cm = ChatMessage(session_id=msg.session_id, sender_name=msg.sender_name,
-                         sender_id=msg.sender_id, content=msg.content, msg_type=msg.msg_type,
-                         is_self=msg.is_self, timestamp=msg.timestamp)
-        database.save_message(cm)
+        # 重复推送不刷新 UI，也不能再次触发自动回复。
+        if not inserted:
+            return
 
         # 性能监控 — 记录消息
         from dmshoot.core.perf_monitor import get_monitor
@@ -779,19 +824,24 @@ class MainWindow(QMainWindow):
             return
         ai = get_ai()
         if self.config.auto_reply_enabled and ai.configured and msg.msg_type == "text":
-            import asyncio, random as rand
+            import random as rand
             delay_ms = int(rand.uniform(self.config.reply_delay_min, self.config.reply_delay_max) * 1000)
             logger.info(f"AI回复延迟 {delay_ms}ms")
-            # 用 parented QTimer 代替 singleShot（窗口关闭时自动清理）
             timer = QTimer(self)
             timer.setSingleShot(True)
-            timer.timeout.connect(lambda a=ai, m=msg: self._call_ai(m, a))
+            def fire_reply(a=ai, m=msg, t=timer):
+                try:
+                    self._call_ai(m, a)
+                finally:
+                    t.deleteLater()
+            timer.timeout.connect(fire_reply)
             timer.start(max(delay_ms, 500))
 
     def _call_ai(self, msg: Message, ai=None):
         ai = ai or get_ai()
         t = AIWorker(msg, ai, self)
         t.done.connect(lambda sid, txt, m=ai.model: self._on_ai_response(sid, txt, m))
+        t.finished.connect(t.deleteLater)
         t.start()
 
     def _on_ai_response(self, session_id, reply_text, model):
@@ -817,26 +867,29 @@ class MainWindow(QMainWindow):
         else:
             logger.info(f"[发送准备] {platform} adapter={adapter.platform_name}")
 
-        for i, part in enumerate(parts):
+        for part in parts:
             # 保存到 DB
             ts = time.time()
             rm = ChatMessage(session_id=session_id, sender_name="AI",
                              sender_id="ai", content=part, is_auto=True,
                              persona=persona, timestamp=ts)
             database.save_message(rm)
-            # 发回平台（多条消息间稍作延迟）
-            if adapter and i > 0:
-                import time as _sleep_time
-                _sleep_time.sleep(0.8)
-            send_ok = False
-            if adapter:
-                send_ok = adapter.send_rate_limited(session_id, part)
-                if not send_ok:
-                    logger.error(f"[发送失败] {platform} → session={session_id}: '{part[:30]}'")
-                    self.bus.log.emit("ERROR", persona, f"发送失败: {part[:20]}...")
-            # 首页气泡（标记发送状态）
+            # 网络发送在后台完成，Qt 主线程只更新本地界面。
             self.page_home.add_message(session_id, persona, part, is_auto=True,
-                                       persona=persona, send_ok=send_ok if adapter else True)
+                                       persona=persona, send_ok=bool(adapter))
+
+        if adapter:
+            from dmshoot.core.concurrency import ConcurrencyManager
+            mgr = ConcurrencyManager.instance()
+            mgr.submit(
+                ConcurrencyManager.PRIO_HIGH,
+                platform,
+                self._send_ai_parts,
+                adapter,
+                session_id,
+                platform,
+                list(parts),
+            )
 
         # 更新会话最后消息
         conn = database.get_conn()
@@ -851,6 +904,29 @@ class MainWindow(QMainWindow):
         trigger_msg = (history[-2].content[:200] if len(history) >= 2
                        else (parts[0] if parts else reply_text))
         self.monitor.add_reply_log(trigger_msg, reply_text)
+
+    def _send_ai_parts(self, adapter, session_id: str, platform: str, parts: list[str]):
+        """在线程池中顺序发送 AI 回复，避免网络请求和间隔等待冻结窗口。"""
+        import time as _sleep_time
+        for index, part in enumerate(parts):
+            if index > 0:
+                _sleep_time.sleep(0.8)
+            try:
+                ok = adapter.send_rate_limited(session_id, part)
+            except Exception:
+                logger.exception(f"[{platform}] 后台发送异常")
+                ok = False
+            try:
+                self._send_result.emit(session_id, platform, part, ok)
+            except RuntimeError:
+                return
+
+    def _on_send_result(self, session_id: str, platform: str, text: str, ok: bool):
+        if ok:
+            return
+        persona = self.config.prompt_preset or "AI"
+        logger.error(f"[发送失败] {platform} → session={session_id}: '{text[:30]}'")
+        self.bus.log.emit("ERROR", persona, f"发送失败: {text[:20]}...")
 
     # ── AI 主动消息 ──
 
@@ -869,6 +945,7 @@ class MainWindow(QMainWindow):
         ai = ai or get_ai()
         t = ActiveAIWorker(session_id, ai, self)
         t.done.connect(lambda sid, txt, m=ai.model: self._on_ai_response(sid, txt, m))
+        t.finished.connect(t.deleteLater)
         t.start()
 
     def _get_prompt(self) -> str:

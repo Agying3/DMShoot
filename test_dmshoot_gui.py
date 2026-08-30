@@ -585,6 +585,13 @@ def test_login_page_cookie_clear():
         check("LoginPage clear DB bilibili_sessdata 空",
               cfg2.bilibili_sessdata == "")
 
+        # 关闭 database 模块持有的连接，避免 Windows 下 os.remove 失败
+        try:
+            if database._conn is not None:
+                database._conn.close()
+                database._conn = None
+        except Exception:
+            pass
         database.DB_PATH = old
         os.remove(tmp)
     except Exception:
@@ -619,6 +626,12 @@ def test_login_page_cookie_save_bilibili():
         check("LoginPage DB bilibili_sessdata 已保存", cfg.bilibili_sessdata == "valid_sess")
         check("LoginPage DB bilibili_jct 已保存", cfg.bilibili_jct == "valid_jct")
 
+        try:
+            if database._conn is not None:
+                database._conn.close()
+                database._conn = None
+        except Exception:
+            pass
         database.DB_PATH = old
         os.remove(tmp)
     except Exception:
@@ -698,61 +711,53 @@ def test_full_message_flow():
 # ═══════════════════════════════════════════════════════════
 
 def test_extract_bilibili_full_format():
-    """测试 B站 Cookie 完整格式解析"""
-    from dmshoot.utils.cookie_reader import extract_bilibili_cookies_sync
+    """测试 B站 Cookie 完整格式解析（mock _run_async，不启动浏览器）"""
+    import dmshoot.utils.cookie_reader as cr
 
-    original_run = asyncio.run
-
-    async def fake_login(path):
-        return ("SESSDATA=abc123%2Cdef; bili_jct=xyz789; "
-                "DedeUserID=12345; DedeUserID__ckMd5=hash123; "
-                "sid=session_id; buvid3=some_buvid")
-
-    asyncio.run = lambda coro: original_run(fake_login(""))
+    original_run_async = cr._run_async
+    cr._run_async = lambda coro: (
+        "SESSDATA=abc123%2Cdef; bili_jct=xyz789; "
+        "DedeUserID=12345; DedeUserID__ckMd5=hash123; "
+        "sid=session_id; buvid3=some_buvid")
     try:
+        from dmshoot.utils.cookie_reader import extract_bilibili_cookies_sync
         result = extract_bilibili_cookies_sync()
         check("Cookie SESSDATA", result["SESSDATA"] == "abc123%2Cdef")
         check("Cookie bili_jct", result["bili_jct"] == "xyz789")
     finally:
-        asyncio.run = original_run
+        cr._run_async = original_run_async
 
 
 def test_extract_bilibili_malformed():
-    """测试畸形 Cookie 字符串"""
-    from dmshoot.utils.cookie_reader import extract_bilibili_cookies_sync
+    """测试畸形 Cookie 字符串（mock _run_async，不启动浏览器）"""
+    import dmshoot.utils.cookie_reader as cr
 
-    original_run = asyncio.run
-
-    async def fake_login(path):
-        return "garbage_data_without_equals_sign"
-
-    asyncio.run = lambda coro: original_run(fake_login(""))
+    original_run_async = cr._run_async
+    cr._run_async = lambda coro: "garbage_data_without_equals_sign"
     try:
+        from dmshoot.utils.cookie_reader import extract_bilibili_cookies_sync
         result = extract_bilibili_cookies_sync()
         check("畸形 Cookie SESSDATA 空", result["SESSDATA"] == "")
         check("畸形 Cookie bili_jct 空", result["bili_jct"] == "")
     finally:
-        asyncio.run = original_run
+        cr._run_async = original_run_async
 
 
 def test_extract_douyin_cookies_success():
-    """测试抖音 Cookie 提取成功（web_protect + keys 格式）"""
-    from dmshoot.utils.cookie_reader import extract_douyin_cookies_sync
+    """测试抖音 Cookie 提取成功（web_protect + keys 格式，mock _run_async 不启动浏览器）"""
+    import dmshoot.utils.cookie_reader as cr
 
-    original_run = asyncio.run
-
-    async def fake_login(path):
-        return {"cookie": "sessionid=test;", "web_protect": "{}", "keys": "{}"}
-
-    asyncio.run = lambda coro: original_run(fake_login(""))
+    original_run_async = cr._run_async
+    cr._run_async = lambda coro: {"cookie": "sessionid=test;", "web_protect": "{}", "keys": "{}"}
     try:
+        from dmshoot.utils.cookie_reader import extract_douyin_cookies_sync
         result = extract_douyin_cookies_sync()
         check("抖音 Cookie dict 非空", isinstance(result, dict) and len(result) > 0)
         check("抖音有 cookie 字段", "cookie" in result)
         check("抖音有 web_protect 字段", "web_protect" in result)
         check("抖音有 keys 字段", "keys" in result)
     finally:
-        asyncio.run = original_run
+        cr._run_async = original_run_async
 
 
 def test_cookie_worker_bilibili_result():
@@ -761,10 +766,11 @@ def test_cookie_worker_bilibili_result():
     from PySide6.QtCore import QThread
 
     # Mock extract_bilibili_cookies_sync
+    from dmshoot.utils.cookie_reader import extract_bilibili_cookies_sync
     original_extract = extract_bilibili_cookies_sync
     import dmshoot.utils.cookie_reader as cr
 
-    def mock_extract():
+    def mock_extract(on_qr_callback=None):
         return {"SESSDATA": "mock_sess", "bili_jct": "mock_jct"}
 
     cr.extract_bilibili_cookies_sync = mock_extract
@@ -791,7 +797,7 @@ def test_cookie_worker_douyin_result():
 
     original_extract = cr.extract_douyin_cookies_sync
 
-    def mock_extract():
+    def mock_extract(on_qr_callback=None):
         return {"cookie": "sessionid=test;", "web_protect": "{}", "keys": "{}"}
 
     cr.extract_douyin_cookies_sync = mock_extract
@@ -817,7 +823,7 @@ def test_cookie_worker_bilibili_empty_result():
 
     original_extract = cr.extract_bilibili_cookies_sync
 
-    def mock_extract():
+    def mock_extract(on_qr_callback=None):
         return {"SESSDATA": "", "bili_jct": ""}  # 空 SESSDATA
 
     cr.extract_bilibili_cookies_sync = mock_extract

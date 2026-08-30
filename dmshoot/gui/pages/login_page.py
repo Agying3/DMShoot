@@ -472,7 +472,8 @@ class LoginPage(QWidget):
             "kuaishou": bool(cfg.ks_cookie),
         }.get(platform, False)
         if has_cookie:
-            self._clear_cookie(platform)
+            self.stop_monitor.emit(platform)
+            self._clear_saved_auth(platform, update_ui=False)
 
         status_map = {"douyin": self.dy_status, "bilibili": self.bili_status, "kuaishou": self.ks_status}
         if platform in status_map:
@@ -579,12 +580,8 @@ class LoginPage(QWidget):
         if platform == "douyin":
             if cookies and isinstance(cookies, dict) and cookies.get("cookie"):
                 database.update_config_field("douyin_cookie", cookies["cookie"])
-                wp = cookies.get("web_protect", "")
-                if wp:
-                    database.update_config_field("douyin_web_protect", wp)
-                keys_v = cookies.get("keys", "")
-                if keys_v:
-                    database.update_config_field("douyin_keys", keys_v)
+                database.update_config_field("douyin_web_protect", cookies.get("web_protect", ""))
+                database.update_config_field("douyin_keys", cookies.get("keys", ""))
                 self.dy_status.setText("已保存，自动登录中...")
                 self.connect_platform.emit("douyin")
             else:
@@ -608,6 +605,13 @@ class LoginPage(QWidget):
                 self.connect_platform.emit("kuaishou")
             else:
                 self.ks_status.setText("未登录，请重试")
+        elif platform == "xiaohongshu":
+            if cookies:
+                database.update_config_field("xhs_cookie", str(cookies))
+                self.xhs_status.setText("已保存")
+                self.connect_platform.emit("xiaohongshu")
+            else:
+                self.xhs_status.setText("未登录，请重试")
 
         self._right_stack.setCurrentIndex(0)
         self._qr_rotate_anim.stop()
@@ -616,27 +620,47 @@ class LoginPage(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-    def _clear_cookie(self, platform: str):
+    def _clear_saved_auth(self, platform: str, update_ui: bool = True):
+        """只清理平台认证字段，不删除历史会话/消息。
+
+        扫码前调用此方法，避免旧的过期 cookie / ticket / localStorage
+        残留字段参与新登录后的连接判断。
+        """
         cfg = database.load_config()
         if platform == "douyin":
             cfg.douyin_cookie = ""
             cfg.douyin_web_protect = ""
             cfg.douyin_keys = ""
-            self.dy_status.setText("已清理")
-            self.dy_monitor.setVisible(False)
-            self._dy_running = False
+            if update_ui:
+                self.dy_status.setText("已清理")
+                self.dy_monitor.setVisible(False)
+                self._dy_running = False
         elif platform == "bilibili":
             cfg.bilibili_sessdata = ""
             cfg.bilibili_jct = ""
-            self.bili_status.setText("已清理")
-            self.bili_monitor.setVisible(False)
-            self._bili_running = False
+            cfg.bilibili_buvid3 = ""
+            cfg.bilibili_buvid4 = ""
+            cfg.bilibili_dedeuserid = ""
+            cfg.bilibili_ac_time_value = ""
+            if update_ui:
+                self.bili_status.setText("已清理")
+                self.bili_monitor.setVisible(False)
+                self._bili_running = False
+        elif platform == "xiaohongshu":
+            cfg.xhs_cookie = ""
+            if update_ui:
+                self.xhs_status.setText("已清理")
+                self._xhs_running = False
         elif platform == "kuaishou":
             cfg.ks_cookie = ""
-            self.ks_status.setText("已清理")
-            self.ks_monitor.setVisible(False)
-            self._ks_running = False
+            if update_ui:
+                self.ks_status.setText("已清理")
+                self.ks_monitor.setVisible(False)
+                self._ks_running = False
         database.save_config(cfg)
+
+    def _clear_cookie(self, platform: str):
+        self._clear_saved_auth(platform, update_ui=True)
         self.clear_platform.emit(platform)
 
     def set_status(self, platform: str, text: str):

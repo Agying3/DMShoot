@@ -241,6 +241,10 @@ class ContactList(QWidget):
         super().__init__()
         self._widget_map: dict[str, ContactItem] = {}  # O(1) 查找
         self._loader: _AvatarLoader | None = None
+        self._ensure_timer = QTimer(self)
+        self._ensure_timer.setSingleShot(True)
+        self._ensure_timer.setInterval(100)
+        self._ensure_timer.timeout.connect(self._ensure_all_ai_buttons)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -322,8 +326,8 @@ class ContactList(QWidget):
                     added.append((sid, s.avatar_url))
 
         # 确保所有widget都有AI按钮（延迟检查，等布局渲染完）
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(100, self._ensure_all_ai_buttons)
+        if not self._ensure_timer.isActive():
+            self._ensure_timer.start()
 
         if added:
             # 去重

@@ -364,6 +364,63 @@ def save_message(msg: ChatMessage) -> bool:
     return inserted
 
 
+def save_incoming_message(session: SessionRecord, msg: ChatMessage) -> tuple[bool, int]:
+    """用一次事务保存入站消息、更新会话并递增未读。"""
+    import time as _time
+    _start = _time.perf_counter()
+    conn = _get_conn()
+    inserted = False
+    unread_count = -1
+    with _lock:
+        try:
+            cur = conn.execute("""
+                INSERT OR IGNORE INTO messages (session_id, platform, sender_name, sender_id,
+                    content, msg_type, is_self, is_auto, persona, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                msg.session_id, _platform_from(msg.session_id),
+                msg.sender_name, msg.sender_id, msg.content,
+                msg.msg_type, int(msg.is_self), int(msg.is_auto), msg.persona, msg.timestamp,
+            ))
+            inserted = cur.rowcount > 0
+            if inserted:
+                conn.execute("""
+                    INSERT INTO sessions (session_id, platform, peer_name, peer_id,
+                        last_message, last_time, unread_count, is_pinned, is_muted,
+                        active_messaging, avatar_url)
+                    VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                    ON CONFLICT(session_id) DO UPDATE SET
+                        peer_name=excluded.peer_name,
+                        peer_id=excluded.peer_id,
+                        last_message=excluded.last_message,
+                        last_time=excluded.last_time,
+                        unread_count=sessions.unread_count + 1,
+                        avatar_url=CASE WHEN excluded.avatar_url != ''
+                            THEN excluded.avatar_url ELSE sessions.avatar_url END
+                """, (
+                    session.session_id, session.platform, session.peer_name, session.peer_id,
+                    session.last_message, session.last_time,
+                    int(session.is_pinned), int(session.is_muted),
+                    int(session.active_messaging), session.avatar_url,
+                ))
+                row = conn.execute(
+                    "SELECT unread_count FROM sessions WHERE session_id = ?",
+                    (session.session_id,),
+                ).fetchone()
+                unread_count = row["unread_count"] if row else 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    _elapsed = (_time.perf_counter() - _start) * 1000
+    try:
+        from dmshoot.core.perf_monitor import get_monitor
+        get_monitor().record_db_write(_elapsed)
+    except Exception:
+        pass
+    return inserted, unread_count
+
+
 def save_messages_batch(msgs: list[ChatMessage]) -> int:
     """批量保存消息，跳过重复。返回实际写入条数"""
     if not msgs:

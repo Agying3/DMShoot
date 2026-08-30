@@ -31,13 +31,22 @@ class AdapterManager:
         self._sidebar = sidebar
         self._monitor = monitor
 
+    def _refresh_config(self):
+        """从 DB 原地刷新共享 AppConfig，避免旧对象后续全量保存覆盖新 cookie。"""
+        latest = database.load_config()
+        for field_name in type(self._config).__dataclass_fields__:
+            setattr(self._config, field_name, getattr(latest, field_name))
+        return self._config
+
     # ── 公共入口 ──
 
     def start_from_ui(self, platform: str):
         """用户点击启动 — 未登录则拒绝"""
+        self._refresh_config()
         has_cookie = {
             "douyin": self._config.douyin_cookie,
             "bilibili": self._config.bilibili_sessdata,
+            "xiaohongshu": self._config.xhs_cookie,
             "kuaishou": self._config.ks_cookie,
         }.get(platform, "")
         if not has_cookie:
@@ -87,8 +96,9 @@ class AdapterManager:
         logger.warning(f"{name} Cookie 已清理，会话/消息/缓存已删除")
 
     def on_auto_monitor_toggle(self, checked: bool):
-        self._config.bilibili_auto_monitor = checked
-        database.save_config(self._config)
+        cfg = self._refresh_config()
+        cfg.bilibili_auto_monitor = checked
+        database.save_config(cfg)
 
     def stop_all(self):
         """关闭时停止所有适配器"""
@@ -111,8 +121,13 @@ class AdapterManager:
             # 在主线程打印启动头，保证日志顺序
             raw_header(f"{name} 监听启动")
             adapter = plugin.create_adapter(self._bus, self._config)
-            adapter.start()
+            # 先登记再启动，避免重复点击或回调创建两个适配器。
             self._adapters[platform] = adapter
+            try:
+                adapter.start()
+            except Exception:
+                self._adapters.pop(platform, None)
+                raise
             logger.success(f"{name} 监听已启动")
             self._bus.log.emit("INFO", name, "私信监听已启动")
             if platform in _IM_UNAVAILABLE_PLATFORMS:

@@ -2,6 +2,7 @@
 
 import sys
 import os
+import threading
 import traceback
 from pathlib import Path
 
@@ -27,7 +28,9 @@ def _ensure_playwright():
     pw_browsers = Path.home() / "AppData" / "Local" / "ms-playwright"
     if pw_browsers.exists() and any(pw_browsers.glob("chromium-*")):
         return
-    print("[*] 首次启动 — 安装 Playwright Chromium (~300MB)...")
+    import logging
+    setup_logger = logging.getLogger("dmshoot.playwright_setup")
+    setup_logger.info("首次启动，正在准备 Playwright Chromium")
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as p:
@@ -37,7 +40,16 @@ def _ensure_playwright():
         import subprocess
         subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"],
                        check=False)
-    print("[OK] Chromium 已就绪")
+    setup_logger.info("Playwright Chromium 已就绪")
+
+
+def _start_playwright_setup():
+    """在后台准备浏览器，不能占用 Qt 主线程。"""
+    threading.Thread(
+        target=_ensure_playwright,
+        name="playwright-setup",
+        daemon=True,
+    ).start()
 
 
 def main():
@@ -46,14 +58,16 @@ def main():
         from PySide6.QtWidgets import QApplication, QMessageBox
         from PySide6.QtCore import Qt
 
+        # 默认交给 Qt 选择硬件渲染。显卡驱动有兼容问题时可显式回退。
+        if os.environ.get("DMSHOOT_SOFTWARE_RENDER") == "1":
+            QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL)
         app = QApplication(sys.argv)
-        app.setAttribute(Qt.AA_UseSoftwareOpenGL)
         app.setApplicationName("DMShoot")
         app.setOrganizationName("DMShoot")
 
-        # 后台安装 Playwright Chromium
+        # 延迟并后台准备 Playwright，不阻塞首屏显示和用户操作
         from PySide6.QtCore import QTimer
-        QTimer.singleShot(500, _ensure_playwright)
+        QTimer.singleShot(500, _start_playwright_setup)
 
         from dmshoot.gui.main_window import MainWindow
         window = MainWindow()

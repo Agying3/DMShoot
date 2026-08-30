@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QSizePolicy,
     QTextBrowser,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTextOption
 from dmshoot.storage.models import ChatMessage
 
@@ -17,12 +17,13 @@ from dmshoot.storage.models import ChatMessage
 class BubbleWidget(QWidget):
     """单条消息气泡 — 支持 rebind() 复用"""
 
-    def __init__(self, message: ChatMessage = None):
-        super().__init__()
+    def __init__(self, message: ChatMessage = None, parent=None):
+        super().__init__(parent)
         self._name_label = None
         self._bubble_label = None
         self._time_label = None
         self._built = False
+        self._is_self = None
         if message:
             self.rebind(message)
 
@@ -36,36 +37,43 @@ class BubbleWidget(QWidget):
         show_name = bool(name_text and not is_self)
         self._name_label.setText(name_text if show_name else "")
         self._name_label.setVisible(show_name)
-        if show_name:
-            self._name_label.setStyleSheet(
-                "color: #4ADE80; font-size: 11px; padding-left: 14px; font-weight: 600;"
-            )
 
         self._bubble_label.setText(message.content)
 
-        # 先应用 QSS（设置字体），再计算宽度（否则 fontMetrics 可能是旧字体）
-        if is_self:
-            self._bubble_label.setStyleSheet(
-                "QLabel#bubble {"
-                "  background: rgba(255,150,50,0.18);"
-                "  border: 1px solid rgba(255,150,50,0.15);"
-                "  border-radius: 18px;"
-                "  padding: 12px 16px;"
-                "  font-size: 13px;"
-                "  color: #FFE0A0;"
-                "}"
-            )
-        else:
-            self._bubble_label.setStyleSheet(
-                "QLabel#bubble {"
-                "  background: rgba(255,255,255,0.07);"
-                "  border: 1px solid rgba(255,255,255,0.10);"
-                "  border-radius: 18px;"
-                "  padding: 12px 16px;"
-                "  font-size: 13px;"
-                "  color: #E2E2ED;"
-                "}"
-            )
+        # 复用同方向气泡时无需重新解析样式和重建横向布局。
+        if is_self != self._is_self:
+            if is_self:
+                self._bubble_label.setStyleSheet(
+                    "QLabel#bubble {"
+                    "  background: rgba(255,150,50,0.18);"
+                    "  border: 1px solid rgba(255,150,50,0.15);"
+                    "  border-radius: 18px;"
+                    "  padding: 12px 16px;"
+                    "  font-size: 13px;"
+                    "  color: #FFE0A0;"
+                    "}"
+                )
+            else:
+                self._bubble_label.setStyleSheet(
+                    "QLabel#bubble {"
+                    "  background: rgba(255,255,255,0.07);"
+                    "  border: 1px solid rgba(255,255,255,0.10);"
+                    "  border-radius: 18px;"
+                    "  padding: 12px 16px;"
+                    "  font-size: 13px;"
+                    "  color: #E2E2ED;"
+                    "}"
+                )
+
+            while self._row.count():
+                self._row.takeAt(0)
+            if is_self:
+                self._row.addStretch(1)
+                self._row.addWidget(self._bubble_label)
+            else:
+                self._row.addWidget(self._bubble_label)
+                self._row.addStretch(1)
+            self._is_self = is_self
 
         # 根据实际字体计算宽度（QSS 已生效）
         fm = self._bubble_label.fontMetrics()
@@ -75,16 +83,6 @@ class BubbleWidget(QWidget):
         box_w = 34 + max_chars * char_w + 8  # padding + 文字 + 余量
         target_w = int(min(max(box_w, 64), 600))
         self._bubble_label.setFixedWidth(target_w)
-
-        # 气泡对齐：stretch 填充左右空白
-        while self._row.count():
-            self._row.takeAt(0)
-        if is_self:
-            self._row.addStretch(1)
-            self._row.addWidget(self._bubble_label)
-        else:
-            self._row.addWidget(self._bubble_label)
-            self._row.addStretch(1)
 
         ts = message.timestamp if message.timestamp is not None else 0.0
         t = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts > 0 else ""
@@ -100,7 +98,9 @@ class BubbleWidget(QWidget):
         outer.setSpacing(2)
 
         self._name_label = QLabel()
-        self._name_label.setStyleSheet("color: rgba(255,255,255,0.4); font-size: 11px; padding-left: 14px;")
+        self._name_label.setStyleSheet(
+            "color: #4ADE80; font-size: 11px; padding-left: 14px; font-weight: 600;"
+        )
         self._name_label.hide()
         outer.addWidget(self._name_label)
 
@@ -150,6 +150,16 @@ class ChatView(QWidget):
         layout.addWidget(self.scroll, stretch=1)
         self.setLayout(layout)
 
+        # 消息批量到达时只保留一个滚动请求。
+        self._scroll_timer = QTimer(self)
+        self._scroll_timer.setSingleShot(True)
+        self._scroll_timer.timeout.connect(self._smart_scroll)
+        self._scroll_force = False
+        self._history_pending: list[ChatMessage] = []
+        self._history_timer = QTimer(self)
+        self._history_timer.setInterval(30)
+        self._history_timer.timeout.connect(self._load_history_chunk)
+
     def show_placeholder(self, text: str):
         """显示空状态引导文字"""
         self.title_label.setText("")
@@ -160,21 +170,22 @@ class ChatView(QWidget):
         self._placeholder.setStyleSheet(
             "color: rgba(255,255,255,0.35); font-size: 14px; padding: 40px;"
         )
-        self.bubble_layout.addWidget(self._placeholder)
-        self.bubble_layout.addStretch()
+        self.bubble_layout.insertWidget(
+            self.bubble_layout.count() - 1, self._placeholder
+        )
 
     def _clear_content(self):
         """清除所有气泡 / Markdown 浏览器 / 占位文字"""
-        for i in range(self.bubble_layout.count() - 1, -1, -1):
-            w = self.bubble_layout.itemAt(i).widget()
-            if w and isinstance(w, (BubbleWidget, QTextBrowser)):
+        self._history_timer.stop()
+        self._history_pending.clear()
+        while self.bubble_layout.count():
+            item = self.bubble_layout.takeAt(0)
+            w = item.widget()
+            if w:
                 w.deleteLater()
-        if hasattr(self, '_placeholder') and self._placeholder:
-            self._placeholder.deleteLater()
-            self._placeholder = None
-        if hasattr(self, '_md_browser') and self._md_browser:
-            self._md_browser.deleteLater()
-            self._md_browser = None
+        self._placeholder = None
+        self._md_browser = None
+        self.bubble_layout.addStretch()
 
     _MD_CSS = """
         body {
@@ -206,8 +217,8 @@ class ChatView(QWidget):
         """渲染 Markdown 格式的逆向日志全文，替代空白聊天区域"""
         self.title_label.setText(title)
         self._clear_content()
-        # 移除 stretch 让浏览器独占空间
-        self.bubble_layout.setStretchFactor(self.bubble_layout, 0)
+        # 移除末尾 stretch，让浏览器独占空间。
+        self.bubble_layout.takeAt(self.bubble_layout.count() - 1)
         self._md_browser = QTextBrowser()
         self._md_browser.setOpenExternalLinks(True)
         self._md_browser.setFrameShape(QTextBrowser.NoFrame)
@@ -244,21 +255,21 @@ class ChatView(QWidget):
         self._clear_content()
 
     MAX_VISIBLE = 50  # 最多显示条数，防止长会话内存膨胀
+    INITIAL_VISIBLE = 12
+    HISTORY_CHUNK = 4
 
     def load_messages(self, title: str, messages: list[ChatMessage]):
         """增量加载 — 复用已有气泡，只更新内容"""
         self.title_label.setText(title)
         # 清除 Markdown 视图和占位文字
-        if hasattr(self, '_md_browser') and self._md_browser:
-            self._md_browser.deleteLater()
-            self._md_browser = None
-        if hasattr(self, '_placeholder') and self._placeholder:
-            self._placeholder.deleteLater()
-            self._placeholder = None
-        # 长会话截断：只保留最近 N 条
-        truncated = len(messages) > self.MAX_VISIBLE
-        if truncated:
-            messages = messages[-self.MAX_VISIBLE:]
+        if ((hasattr(self, '_md_browser') and self._md_browser) or
+                (hasattr(self, '_placeholder') and self._placeholder)):
+            self._clear_content()
+        self._history_timer.stop()
+        self._history_pending.clear()
+        messages = messages[-self.MAX_VISIBLE:]
+        initial = messages[-self.INITIAL_VISIBLE:]
+        self._history_pending = list(messages[:-self.INITIAL_VISIBLE])
         # 收集已有气泡
         existing = []
         for i in range(self.bubble_layout.count() - 1):  # skip stretch
@@ -267,44 +278,61 @@ class ChatView(QWidget):
                 existing.append(w)
 
         # 更新/新增
-        for i, msg in enumerate(messages):
+        for i, msg in enumerate(initial):
             if i < len(existing):
                 existing[i].rebind(msg)
             else:
                 self.bubble_layout.insertWidget(i, BubbleWidget(msg))
 
         # 删除多余的
-        for w in existing[len(messages):]:
+        for w in existing[len(initial):]:
+            self.bubble_layout.removeWidget(w)
             w.deleteLater()
 
-        # 双保险滚到底：150ms 等布局，350ms 兜底（布局重新计算后）
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(150, lambda: self.scroll.verticalScrollBar().setValue(
-            self.scroll.verticalScrollBar().maximum()))
-        QTimer.singleShot(350, lambda: self.scroll.verticalScrollBar().setValue(
-            self.scroll.verticalScrollBar().maximum()))
+        self._schedule_scroll(120, force=True)
+        if self._history_pending:
+            self._history_timer.start()
+
+    def _load_history_chunk(self):
+        if not self._history_pending:
+            self._history_timer.stop()
+            return
+        sb = self.scroll.verticalScrollBar()
+        was_at_bottom = sb.value() >= sb.maximum() - 60
+        chunk = self._history_pending[-self.HISTORY_CHUNK:]
+        del self._history_pending[-len(chunk):]
+        for msg in reversed(chunk):
+            self.bubble_layout.insertWidget(0, BubbleWidget(msg))
+        self._schedule_scroll(30, force=was_at_bottom)
 
     def append_message(self, message: ChatMessage):
+        sb = self.scroll.verticalScrollBar()
+        was_at_bottom = sb.value() >= sb.maximum() - 60
         # 保持上限：超出时删除最旧的气泡
         bubble_count = sum(1 for i in range(self.bubble_layout.count() - 1)
                            if isinstance(self.bubble_layout.itemAt(i).widget(), BubbleWidget))
-        if bubble_count >= self.MAX_VISIBLE:
+        if self._history_pending:
+            self._history_pending.pop(0)
+        elif bubble_count >= self.MAX_VISIBLE:
             for i in range(self.bubble_layout.count() - 1):
                 w = self.bubble_layout.itemAt(i).widget()
                 if isinstance(w, BubbleWidget):
+                    self.bubble_layout.removeWidget(w)
                     w.deleteLater()
                     break
-        # 分隔线
-        if bubble_count > 0:
-            sep = QLabel()
-            sep.setFixedHeight(1)
-            sep.setStyleSheet("background: rgba(255,255,255,0.05); margin: 4px 12px;")
-            self.bubble_layout.insertWidget(self.bubble_layout.count() - 1, sep)
-        self.bubble_layout.insertWidget(self.bubble_layout.count() - 1, BubbleWidget(message))
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(60, self._smart_scroll)
+        self.bubble_layout.insertWidget(
+            self.bubble_layout.count() - 1, BubbleWidget(message)
+        )
+        self._schedule_scroll(60, force=was_at_bottom)
+
+    def _schedule_scroll(self, delay: int = 60, force: bool = False):
+        """合并短时间内的滚动请求，消息洪峰时只重排一次。"""
+        self._scroll_force = self._scroll_force or force
+        if not self._scroll_timer.isActive():
+            self._scroll_timer.start(delay)
 
     def _smart_scroll(self):
         sb = self.scroll.verticalScrollBar()
-        if sb.value() >= sb.maximum() - 60:
+        if self._scroll_force or sb.value() >= sb.maximum() - 60:
             sb.setValue(sb.maximum())
+        self._scroll_force = False

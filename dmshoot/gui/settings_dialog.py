@@ -178,7 +178,8 @@ class SettingsDialog(QDialog):
         self._ai_tab = self._create_ai_tab()
         self._platform_tab = self._create_platform_tab()
         tabs.addTab(self._create_reply_tab(), "回复")
-        tabs.addTab(self._create_theme_tab(), "主题")
+        self._theme_placeholder = QWidget()
+        tabs.addTab(self._theme_placeholder, "主题")
         self._perf_placeholder = QWidget()
         tabs.addTab(self._perf_placeholder, "性能")
         tabs.addTab(self._create_debug_tab(), "调试")
@@ -563,12 +564,21 @@ class SettingsDialog(QDialog):
         return scroll
     
     def _on_tab_changed(self, index: int):
-        """延迟创建性能页面 — 解决 Qt segfault"""
+        """按需创建壁纸和性能页，避免打开设置时解码图片和初始化图表。"""
         from PySide6.QtWidgets import QTabWidget
         tabs = self.sender()
-        if not tabs or tabs.widget(index) is not self._perf_placeholder:
+        if not tabs:
             return
-        print("[perf] lazy-creating PerfChart...")
+        placeholder = tabs.widget(index)
+        if placeholder is self._theme_placeholder:
+            real_tab = self._create_theme_tab()
+            tabs.removeTab(index)
+            tabs.insertTab(index, real_tab, "主题")
+            tabs.setCurrentIndex(index)
+            self._theme_placeholder = None
+            return
+        if placeholder is not self._perf_placeholder:
+            return
         try:
             # 替换占位为真实 perf tab
             real_tab = self._create_perf_tab()
