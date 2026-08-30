@@ -102,6 +102,7 @@ class ConfigUpdateRequest(BaseModel):
     theme: Optional[str] = Field(None, pattern="^(dark|light)$")
     rate_douyin: Optional[int] = Field(None, ge=1, le=60)
     rate_bilibili: Optional[int] = Field(None, ge=1, le=60)
+    rate_kuaishou: Optional[int] = Field(None, ge=1, le=60)
 
 
 class ConfigResponse(BaseModel):
@@ -115,8 +116,9 @@ class ConfigResponse(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 1024
     theme: str = "dark"
-    rate_douyin: int = 3
-    rate_bilibili: int = 3
+    rate_douyin: int = 5
+    rate_bilibili: int = 10
+    rate_kuaishou: int = 5
 
 
 # ── 提示词 ──

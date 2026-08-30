@@ -483,6 +483,88 @@ def test_chat_view_append_message():
           view.bubble_layout.count() == count_before + 1)
 
 
+def test_chat_view_smart_new_messages():
+    """查看历史时不抢滚动位置，并限制消息洪峰动画数量。"""
+    from PySide6.QtTest import QTest
+    from dmshoot.gui.widgets.chat_view import ChatView
+    from dmshoot.storage.models import ChatMessage
+
+    view = ChatView()
+    view.resize(420, 240)
+    view.show()
+    messages = [
+        ChatMessage(
+            session_id="b:1", sender_name="U",
+            content=f"历史消息 {i} " + "内容" * 24,
+            timestamp=100.0 + i,
+        )
+        for i in range(20)
+    ]
+    view.load_messages("测试会话", messages)
+    QTest.qWait(220)
+    scrollbar = view.scroll.verticalScrollBar()
+    scrollbar.setValue(scrollbar.minimum())
+    _app.processEvents()
+
+    view.append_message(
+        ChatMessage(session_id="b:1", sender_name="U", content="新消息")
+    )
+    _app.processEvents()
+    check("ChatView 历史位置新消息计数", view._new_message_count == 1)
+    check("ChatView 新消息按钮显示", not view._new_message_button.isHidden())
+
+    view._jump_to_latest()
+    QTest.qWait(100)
+    check("ChatView 回到底部计数清零", view._new_message_count == 0)
+    check("ChatView 回到底部按钮隐藏", view._new_message_button.isHidden())
+    check("ChatView 回到底部位置正确", view._is_near_bottom())
+
+    view.close()
+
+
+def test_navigation_interactions():
+    """导航指示条和重连状态都能安全更新。"""
+    from PySide6.QtTest import QTest
+    from dmshoot.gui.sidebar import Sidebar
+
+    sidebar = Sidebar()
+    sidebar.resize(90, 500)
+    sidebar.show()
+    _app.processEvents()
+    sidebar.set_active("prompt")
+    QTest.qWait(180)
+    check("Sidebar 当前页面记录", sidebar._active_key == "prompt")
+    check("Sidebar 指示条显示", not sidebar._indicator.isHidden())
+    target = sidebar._buttons["prompt"]
+    check("Sidebar 指示条对齐", abs(
+        sidebar._indicator.geometry().center().y()
+        - target.mapTo(sidebar, target.rect().center()).y()
+    ) <= 2)
+    sidebar.update_status("douyin", "WS 重连中")
+    check("Sidebar 重连状态", sidebar.status_dy.dots._status == "reconnecting")
+    check("Sidebar 状态详情", "WS 重连中" in sidebar.status_dy.toolTip())
+
+    sidebar.close()
+
+
+def test_toast_interaction():
+    """轻提示不阻塞并能自动淡出。"""
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QWidget
+    from dmshoot.gui.widgets.toast import show_toast
+
+    host = QWidget()
+    host.resize(500, 300)
+    host.show()
+    toast = show_toast(host, "设置已保存", "success", 600)
+    QTest.qWait(150)
+    check("Toast 非模态显示", toast is not None and not toast.isHidden())
+    check("Toast 位于宿主范围", host.rect().contains(toast.geometry()))
+    QTest.qWait(700)
+    check("Toast 自动淡出", getattr(host, "_dmshoot_toast", None) is None)
+    host.close()
+
+
 # ═══════════════════════════════════════════════════════════
 # 3. LoginPage — Cookie 流程测试
 # ═══════════════════════════════════════════════════════════
@@ -710,12 +792,20 @@ def test_full_message_flow():
 # 5. Playwright / Cookie 提取测试
 # ═══════════════════════════════════════════════════════════
 
+def _mock_async_result(result):
+    """返回会关闭传入协程的测试桩，避免未 await 警告。"""
+    def run(coro):
+        coro.close()
+        return result
+    return run
+
+
 def test_extract_bilibili_full_format():
     """测试 B站 Cookie 完整格式解析（mock _run_async，不启动浏览器）"""
     import dmshoot.utils.cookie_reader as cr
 
     original_run_async = cr._run_async
-    cr._run_async = lambda coro: (
+    cr._run_async = _mock_async_result(
         "SESSDATA=abc123%2Cdef; bili_jct=xyz789; "
         "DedeUserID=12345; DedeUserID__ckMd5=hash123; "
         "sid=session_id; buvid3=some_buvid")
@@ -733,7 +823,7 @@ def test_extract_bilibili_malformed():
     import dmshoot.utils.cookie_reader as cr
 
     original_run_async = cr._run_async
-    cr._run_async = lambda coro: "garbage_data_without_equals_sign"
+    cr._run_async = _mock_async_result("garbage_data_without_equals_sign")
     try:
         from dmshoot.utils.cookie_reader import extract_bilibili_cookies_sync
         result = extract_bilibili_cookies_sync()
@@ -748,7 +838,9 @@ def test_extract_douyin_cookies_success():
     import dmshoot.utils.cookie_reader as cr
 
     original_run_async = cr._run_async
-    cr._run_async = lambda coro: {"cookie": "sessionid=test;", "web_protect": "{}", "keys": "{}"}
+    cr._run_async = _mock_async_result(
+        {"cookie": "sessionid=test;", "web_protect": "{}", "keys": "{}"}
+    )
     try:
         from dmshoot.utils.cookie_reader import extract_douyin_cookies_sync
         result = extract_douyin_cookies_sync()
@@ -942,7 +1034,7 @@ ALL_TESTS: list[tuple[str, callable]] = [
     ("Adapter disconnect 保存状态", test_adapter_disconnect_saves_state),
     ("Adapter connect 无效凭证", test_adapter_connect_no_network),
 
-    # 2. GUI 组件 (13)
+    # 2. GUI 组件
     ("ReplyLogEntry 有回复", test_reply_log_entry),
     ("ReplyLogEntry 无回复", test_reply_log_entry_no_reply),
     ("ReplyLogEntry Unicode", test_reply_log_entry_unicode),
@@ -957,6 +1049,9 @@ ALL_TESTS: list[tuple[str, callable]] = [
     ("LogPanel 清空", test_log_panel_clear),
     ("ChatView 加载消息", test_chat_view_load_messages),
     ("ChatView 追加消息", test_chat_view_append_message),
+    ("ChatView 智能新消息", test_chat_view_smart_new_messages),
+    ("导航交互", test_navigation_interactions),
+    ("轻提示交互", test_toast_interaction),
 
     # 3. Login/Cookie 流程 (9)
     ("LoginPage 初始化", test_login_page_init),
@@ -999,9 +1094,14 @@ if __name__ == "__main__":
     failed_tests: list[str] = []
 
     for name, fn in ALL_TESTS:
+        result_start = len(_results)
         try:
             fn()
-            passed += 1
+            checks = _results[result_start:]
+            if any(not item[1] for item in checks):
+                failed_tests.append(name)
+            else:
+                passed += 1
         except Exception as e:
             import traceback
             fail(name, str(e))

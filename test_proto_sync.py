@@ -90,6 +90,21 @@ def test_extract_messages_with_real_data():
     msgs2 = extract_messages_from_protobuf(raw2)
     check("dedup duplicate", len(msgs2) == 1)
 
+    # 同文消息只要服务端 ID 或会话序号不同，就不能误去重
+    server_1 = b'\x18' + _encode_varint(101)
+    server_2 = b'\x18' + _encode_varint(102)
+    by_server = extract_messages_from_protobuf(
+        sender + server_1 + content_field + sender + server_2 + content_field
+    )
+    check("same text distinct server ids", len(by_server) == 2)
+
+    index_1 = b'\x20' + _encode_varint(1)
+    index_2 = b'\x20' + _encode_varint(2)
+    by_index = extract_messages_from_protobuf(
+        sender + index_1 + content_field + sender + index_2 + content_field
+    )
+    check("same text distinct indexes", len(by_index) == 2)
+
 
 def test_extract_messages_truncated():
     from dmshoot.utils.proto_msg_parser import extract_messages_from_protobuf

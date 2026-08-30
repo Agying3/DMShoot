@@ -19,7 +19,7 @@ from typing import Optional
 from dmshoot.core.adapter import BaseAdapter
 from dmshoot.core.message import Message
 from dmshoot.plugins.xiaohongshu.im_client import XHSIMClient
-from dmshoot.utils.console_log import get_logger, is_log_enabled
+from dmshoot.utils.console_log import get_logger
 
 logger = get_logger(__name__)
 
@@ -307,18 +307,21 @@ class XHSAdapter(BaseAdapter):
                     msg_ts = _parse_timestamp(m.get("time", 0) or m.get("timestamp", 0))
                     sender_name = self._my_name if is_self else peer_name
 
-                    db.save_message(ChatMessage(
-                        session_id=session_id, sender_name=sender_name,
-                        sender_id=sender_id, content=content,
-                        msg_type="text", timestamp=msg_ts, is_self=is_self,
-                    ))
-
-                    if not is_self:
+                    message_key = f"xiaohongshu:{msg_id}" if msg_id else ""
+                    if is_self:
+                        db.save_message(ChatMessage(
+                            session_id=session_id, sender_name=sender_name,
+                            sender_id=sender_id, content=content,
+                            msg_type="text", timestamp=msg_ts, is_self=True,
+                            message_key=message_key,
+                        ))
+                    else:
                         dm_msg = Message(
                             platform="xiaohongshu", msg_type="text",
                             sender_id=sender_id, sender_name=sender_name,
                             session_id=session_id, content=content,
                             timestamp=msg_ts, is_self=is_self,
+                            message_key=message_key,
                         )
                         logger.recv("小红书", sender_name, content[:50])
                         self._on_message(dm_msg)
@@ -334,7 +337,7 @@ class XHSAdapter(BaseAdapter):
         """回退：轮询创作者平台消息（仅通知类）"""
         try:
             from dmshoot.storage import database as db
-            from dmshoot.storage.models import ChatMessage, SessionRecord
+            from dmshoot.storage.models import SessionRecord
 
             resp = self._call(f"{self.GALAXY_URL}/api/galaxy/message/list",
                               params={"size": 20})
@@ -374,11 +377,6 @@ class XHSAdapter(BaseAdapter):
                 session_id = f"xiaohongshu:{peer_id}"
                 sender_name = self._my_name if is_self else peer_name
 
-                db.save_message(ChatMessage(
-                    session_id=session_id, sender_name=sender_name,
-                    sender_id=sender_id, content=content,
-                    msg_type="text", timestamp=ts, is_self=is_self,
-                ))
                 if not is_self:
                     db.upsert_session(SessionRecord(
                         session_id=session_id, platform="xiaohongshu",
@@ -392,6 +390,7 @@ class XHSAdapter(BaseAdapter):
                     sender_id=sender_id, sender_name=sender_name,
                     session_id=session_id, content=content,
                     timestamp=ts, is_self=is_self,
+                    message_key=f"xiaohongshu:{msg_id}" if msg_id else "",
                 )
                 logger.recv("小红书", sender_name, content[:50])
                 self._on_message(dm_msg)
@@ -401,8 +400,7 @@ class XHSAdapter(BaseAdapter):
             if new_count > 0:
                 self._state["replied"] = list(self._replied)[-5000:]
                 _save_state(self._state)
-                if is_log_enabled("polling"):
-                    logger.debug(f"小红书轮询: {new_count}条新消息")
+                logger.debug_category("polling", f"小红书轮询: {new_count}条新消息")
 
         except Exception as e:
             logger.warning(f"小红书轮询异常: {e}")

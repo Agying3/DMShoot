@@ -72,6 +72,57 @@ QPushButton#navBtn[active="true"] {
     color: #F87171;
     font-weight: 600;
 }
+QFrame#navIndicator {
+    background: #F87171;
+    border: none;
+    border-radius: 1px;
+}
+
+/* ── 非模态轻提示 ── */
+QFrame#toast {
+    background: rgba(24,27,36,0.97);
+    border: 1px solid rgba(240,192,96,0.42);
+    border-radius: 8px;
+}
+QFrame#toast[kind="success"] { border-color: rgba(74,222,128,0.55); }
+QFrame#toast[kind="warning"] { border-color: rgba(248,113,113,0.62); }
+QLabel#toastIcon {
+    background: rgba(240,192,96,0.14);
+    border-radius: 8px;
+    color: #FFD580;
+    font-size: 11px;
+    font-weight: 700;
+}
+QFrame#toast[kind="success"] QLabel#toastIcon {
+    background: rgba(74,222,128,0.14);
+    color: #86EFAC;
+}
+QFrame#toast[kind="warning"] QLabel#toastIcon {
+    background: rgba(248,113,113,0.14);
+    color: #FCA5A5;
+}
+QLabel#toastText {
+    background: transparent;
+    color: rgba(255,255,255,0.90);
+    font-size: 12px;
+}
+QPushButton#newMessagesButton {
+    background: rgba(24,27,36,0.96);
+    border: 1px solid rgba(240,192,96,0.52);
+    border-radius: 8px;
+    color: #FFD580;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 0;
+}
+QPushButton#newMessagesButton:hover {
+    background: rgba(42,45,55,0.98);
+    border-color: rgba(240,192,96,0.78);
+    color: #FFE7B0;
+}
+QPushButton#newMessagesButton:pressed {
+    background: rgba(240,192,96,0.16);
+}
 
 /* ── 面板 ── */
 QWidget#MonitorPanel {

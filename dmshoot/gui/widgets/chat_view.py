@@ -7,9 +7,9 @@ import markdown
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QSizePolicy,
-    QTextBrowser,
+    QTextBrowser, QPushButton,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QTextOption
 from dmshoot.storage.models import ChatMessage
 
@@ -122,7 +122,6 @@ class BubbleWidget(QWidget):
 
         self.setLayout(outer)
 
-
 class ChatView(QWidget):
     def __init__(self):
         super().__init__()
@@ -150,6 +149,17 @@ class ChatView(QWidget):
         layout.addWidget(self.scroll, stretch=1)
         self.setLayout(layout)
 
+        self._new_message_count = 0
+        self._new_message_button = QPushButton(self.scroll.viewport())
+        self._new_message_button.setObjectName("newMessagesButton")
+        self._new_message_button.setFixedSize(132, 32)
+        self._new_message_button.setFocusPolicy(Qt.NoFocus)
+        self._new_message_button.setCursor(Qt.PointingHandCursor)
+        self._new_message_button.clicked.connect(self._jump_to_latest)
+        self._new_message_button.hide()
+        self.scroll.viewport().installEventFilter(self)
+        self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll_value_changed)
+
         # 消息批量到达时只保留一个滚动请求。
         self._scroll_timer = QTimer(self)
         self._scroll_timer.setSingleShot(True)
@@ -176,6 +186,7 @@ class ChatView(QWidget):
 
     def _clear_content(self):
         """清除所有气泡 / Markdown 浏览器 / 占位文字"""
+        self._reset_new_message_notice()
         self._history_timer.stop()
         self._history_pending.clear()
         while self.bubble_layout.count():
@@ -255,11 +266,13 @@ class ChatView(QWidget):
         self._clear_content()
 
     MAX_VISIBLE = 50  # 最多显示条数，防止长会话内存膨胀
+    MAX_READING_BUFFER = 20
     INITIAL_VISIBLE = 12
     HISTORY_CHUNK = 4
 
     def load_messages(self, title: str, messages: list[ChatMessage]):
         """增量加载 — 复用已有气泡，只更新内容"""
+        self._reset_new_message_notice()
         self.title_label.setText(title)
         # 清除 Markdown 视图和占位文字
         if ((hasattr(self, '_md_browser') and self._md_browser) or
@@ -307,23 +320,82 @@ class ChatView(QWidget):
 
     def append_message(self, message: ChatMessage):
         sb = self.scroll.verticalScrollBar()
-        was_at_bottom = sb.value() >= sb.maximum() - 60
+        was_at_bottom = self._is_near_bottom()
         # 保持上限：超出时删除最旧的气泡
-        bubble_count = sum(1 for i in range(self.bubble_layout.count() - 1)
-                           if isinstance(self.bubble_layout.itemAt(i).widget(), BubbleWidget))
+        bubble_count = self._bubble_count()
         if self._history_pending:
             self._history_pending.pop(0)
-        elif bubble_count >= self.MAX_VISIBLE:
-            for i in range(self.bubble_layout.count() - 1):
-                w = self.bubble_layout.itemAt(i).widget()
-                if isinstance(w, BubbleWidget):
-                    self.bubble_layout.removeWidget(w)
-                    w.deleteLater()
-                    break
+        elif ((was_at_bottom and bubble_count >= self.MAX_VISIBLE)
+              or bubble_count >= self.MAX_VISIBLE + self.MAX_READING_BUFFER):
+            self._remove_oldest_bubble()
+        bubble = BubbleWidget(message)
         self.bubble_layout.insertWidget(
-            self.bubble_layout.count() - 1, BubbleWidget(message)
+            self.bubble_layout.count() - 1, bubble
         )
-        self._schedule_scroll(60, force=was_at_bottom)
+        if was_at_bottom:
+            self._schedule_scroll(60, force=True)
+        else:
+            self._new_message_count += 1
+            self._update_new_message_notice()
+
+    def _bubble_count(self):
+        return sum(
+            1 for i in range(self.bubble_layout.count() - 1)
+            if isinstance(self.bubble_layout.itemAt(i).widget(), BubbleWidget)
+        )
+
+    def _remove_oldest_bubble(self):
+        for i in range(self.bubble_layout.count() - 1):
+            widget = self.bubble_layout.itemAt(i).widget()
+            if isinstance(widget, BubbleWidget):
+                self.bubble_layout.removeWidget(widget)
+                widget.deleteLater()
+                return True
+        return False
+
+    def _trim_bubbles(self):
+        while self._bubble_count() > self.MAX_VISIBLE:
+            if not self._remove_oldest_bubble():
+                break
+
+    def _is_near_bottom(self):
+        sb = self.scroll.verticalScrollBar()
+        return sb.value() >= sb.maximum() - 60
+
+    def _update_new_message_notice(self):
+        count = "99+" if self._new_message_count > 99 else str(self._new_message_count)
+        self._new_message_button.setText(f"↓  {count}条新消息")
+        self._position_new_message_button()
+        self._new_message_button.show()
+        self._new_message_button.raise_()
+
+    def _reset_new_message_notice(self):
+        self._new_message_count = 0
+        if hasattr(self, "_new_message_button"):
+            self._new_message_button.hide()
+
+    def _jump_to_latest(self):
+        self._trim_bubbles()
+        self._reset_new_message_notice()
+        self._schedule_scroll(0, force=True)
+
+    def _on_scroll_value_changed(self, _value):
+        if self._new_message_count and self._is_near_bottom():
+            self._trim_bubbles()
+            self._reset_new_message_notice()
+            self._schedule_scroll(0, force=True)
+
+    def _position_new_message_button(self):
+        viewport = self.scroll.viewport()
+        self._new_message_button.move(
+            max(8, (viewport.width() - self._new_message_button.width()) // 2),
+            max(8, viewport.height() - self._new_message_button.height() - 16),
+        )
+
+    def eventFilter(self, watched, event):
+        if watched is self.scroll.viewport() and event.type() in (QEvent.Resize, QEvent.Show):
+            self._position_new_message_button()
+        return super().eventFilter(watched, event)
 
     def _schedule_scroll(self, delay: int = 60, force: bool = False):
         """合并短时间内的滚动请求，消息洪峰时只重排一次。"""
@@ -335,4 +407,5 @@ class ChatView(QWidget):
         sb = self.scroll.verticalScrollBar()
         if self._scroll_force or sb.value() >= sb.maximum() - 60:
             sb.setValue(sb.maximum())
+            self._reset_new_message_notice()
         self._scroll_force = False

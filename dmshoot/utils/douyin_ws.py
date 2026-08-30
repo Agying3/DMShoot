@@ -53,18 +53,24 @@ class DouyinWSReceiver:
         receiver.stop()
     """
 
-    def __init__(self, auth):
+    def __init__(self, auth, on_state=None):
         self._auth = auth
         self._queue: queue.Queue = queue.Queue()
         self._thread: threading.Thread | None = None
         self._running = False
         self._ws = None
+        self._connected = False
+        self._stop_event = threading.Event()
+        self._callback_lock = threading.Lock()
+        self._wakeup_callback = None
+        self._state_callback = on_state
 
     def start(self):
         """启动 WebSocket 后台线程"""
         if self._running:
             return
         self._running = True
+        self._stop_event.clear()
         self._thread = threading.Thread(target=self._run_ws, daemon=True, name="douyin-ws")
         self._thread.start()
         logger.success("WebSocket 接收器已启动")
@@ -72,6 +78,9 @@ class DouyinWSReceiver:
     def stop(self):
         """停止 WebSocket"""
         self._running = False
+        self._connected = False
+        self._stop_event.set()
+        self._notify_wakeup()
         if self._ws:
             try:
                 self._ws.close()
@@ -80,6 +89,30 @@ class DouyinWSReceiver:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=5)
         logger.info("抖音 WebSocket 接收器已停止")
+
+    def set_wakeup_callback(self, callback):
+        """设置队列到达通知；回调可安全唤醒另一个 asyncio 事件循环。"""
+        with self._callback_lock:
+            self._wakeup_callback = callback
+        if callback and not self._queue.empty():
+            self._notify_wakeup()
+
+    def _notify_wakeup(self):
+        with self._callback_lock:
+            callback = self._wakeup_callback
+        if callback:
+            try:
+                callback()
+            except Exception:
+                pass
+
+    def _emit_state(self, state: str, message: str = ""):
+        callback = self._state_callback
+        if callback:
+            try:
+                callback(state, message)
+            except Exception:
+                logger.debug("WS 状态回调异常", exc_info=True)
 
     def get_message(self, timeout: float = 0.1):
         """非阻塞获取一条消息，如果没有返回 None"""
@@ -98,10 +131,24 @@ class DouyinWSReceiver:
             msgs.append(m)
         return msgs
 
+    def get_messages_batch(self, max_items: int = 100) -> list:
+        """按上限取一批消息，避免突发流量长时间占用适配器线程。"""
+        msgs = []
+        for _ in range(max(1, max_items)):
+            try:
+                msgs.append(self._queue.get_nowait())
+            except queue.Empty:
+                break
+        return msgs
+
     @property
     def queue_size(self) -> int:
         """队列中待处理消息数"""
         return self._queue.qsize()
+
+    @property
+    def connected(self) -> bool:
+        return self._connected
 
     # ── 内部 ──
 
@@ -117,36 +164,73 @@ class DouyinWSReceiver:
         if str(_SDK_DY) not in sys.path:
             sys.path.insert(0, str(_SDK_DY))
 
-        from dy_apis.douyin_recv_msg import DouyinRecvMsg
-        import websocket
-
-        reconnect_delay = 3  # 初始重连延迟
+        reconnect_delay = 3  # 连续握手失败时指数退避
 
         while self._running:
+            wrapped = None
             try:
-                self._ws = _WrappedWS(self._auth, self._queue)
-                self._ws.start()  # 阻塞，直到连接断开
+                self._connected = False
+                self._emit_state("connecting", "WS 连接中")
+                wrapped = _WrappedWS(
+                    self._auth,
+                    self._queue,
+                    on_message_ready=self._notify_wakeup,
+                    on_open=self._on_open,
+                    on_error=self._on_error,
+                    on_close=self._on_close,
+                )
+                self._ws = wrapped
+                wrapped.start()  # 阻塞，直到连接断开
             except Exception as e:
                 logger.warning(f"抖音 WS 异常: {type(e).__name__}: {e}")
+                self._emit_state("connecting", f"WS 异常，准备重连: {e}")
+            finally:
+                self._connected = False
 
             if not self._running:
                 break
 
-            logger.warning(f"WebSocket 断开，{reconnect_delay}秒后重连...")
-            time.sleep(reconnect_delay)
-            reconnect_delay = min(reconnect_delay * 2, 60)  # 指数退避，最大60秒
+            # 成功握手过就回到短重连；只有连续握手失败才指数退避。
+            delay = 3 if wrapped and wrapped.was_opened else reconnect_delay
+            reconnect_delay = 3 if wrapped and wrapped.was_opened else min(reconnect_delay * 2, 60)
+            logger.warning(f"WebSocket 断开，{delay}秒后重连...")
+            self._emit_state("connecting", f"WS 已断开，{delay} 秒后重连")
+            if self._stop_event.wait(delay):
+                break
 
+        self._connected = False
         logger.info("抖音 WS 线程退出")
+
+    def _on_open(self):
+        self._connected = True
+        self._emit_state("online", "WS 已连接")
+
+    def _on_error(self, error):
+        self._connected = False
+        self._emit_state("connecting", f"WS 异常: {error}")
+
+    def _on_close(self, code, message):
+        self._connected = False
+        detail = f"code={code}" if code is not None else "连接关闭"
+        if message:
+            detail += f" {str(message)[:60]}"
+        self._emit_state("connecting", detail)
 
 
 class _WrappedWS:
     """包装 DouyinRecvMsg，将消息推入队列（不处理重连，由外层循环负责）"""
     
-    def __init__(self, auth, msg_queue):
+    def __init__(self, auth, msg_queue, on_message_ready=None,
+                 on_open=None, on_error=None, on_close=None):
         self._auth = auth
         self._msg_queue = msg_queue
         self._inner = None
         self._ws_app = None
+        self._on_message_ready = on_message_ready
+        self._on_open_callback = on_open
+        self._on_error_callback = on_error
+        self._on_close_callback = on_close
+        self.was_opened = False
 
     def start(self):
         """创建 DouyinRecvMsg 实例并启动 WebSocket（阻塞）"""
@@ -170,17 +254,34 @@ class _WrappedWS:
             },
             cookie=inner.auth.cookie_str,
             on_message=inner.on_message,
-            on_error=lambda ws, e: logger.warning(f"WS异常: {e}"),
-            on_close=lambda ws, code, msg: logger.warning(
-                f"WS断开 (code={code})" + (f" msg={msg[:60]}" if msg else "")),
-            on_open=lambda ws: logger.success("WS已连接 ✓"),
+            on_error=self._handle_error,
+            on_close=self._handle_close,
+            on_open=self._handle_open,
         )
         self._ws_app.run_forever(
             origin='https://www.douyin.com',
-            ping_interval=15,       # 15秒ping防止douyin服务端踢人
-            ping_timeout=5,         # 5秒超时快速发现断连
+            ping_interval=15,
+            ping_timeout=5,
             ping_payload='ping',
         )
+
+    def _handle_open(self, ws):
+        self.was_opened = True
+        logger.success("WS已连接 ✓")
+        if self._on_open_callback:
+            self._on_open_callback()
+
+    def _handle_error(self, ws, error):
+        logger.warning(f"WS异常: {error}")
+        if self._on_error_callback:
+            self._on_error_callback(error)
+
+    def _handle_close(self, ws, code, message):
+        logger.warning(
+            f"WS断开 (code={code})" + (f" msg={str(message)[:60]}" if message else "")
+        )
+        if self._on_close_callback:
+            self._on_close_callback(code, message)
 
     def close(self):
         if self._ws_app:
@@ -237,9 +338,12 @@ class _WrappedWS:
                                 "conversation_id": conversation_id,
                                 "conversation_short_id": str(conversation_short_id),
                                 "msg_index": index,
+                                "server_message_id": str(server_msg_id or ""),
                                 "msg_type": "text",
                                 "timestamp": real_ts,
                             })
+                            if self._on_message_ready:
+                                self._on_message_ready()
             except Exception as e:
                 logger.debug(f"抖音 WS 消息解析异常: {e}")
 

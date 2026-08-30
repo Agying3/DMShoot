@@ -1,7 +1,9 @@
 """侧边栏导航 — 状态点阵放在上方，避免底部圆角裁切"""
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QFrame
+from PySide6.QtCore import (
+    QEasingCurve, QPoint, QPropertyAnimation, QRect, QTimer, Signal, Qt,
+)
 
 from dmshoot.gui.widgets.platform_status import PlatformStatusRow
 
@@ -69,14 +71,58 @@ class Sidebar(QWidget):
         layout.addStretch()
 
         self.setLayout(layout)
+        self._active_key = ""
+        self._indicator_pending_animation = False
+        self._indicator = QFrame(self)
+        self._indicator.setObjectName("navIndicator")
+        self._indicator.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._indicator.hide()
+        self._indicator_animation = QPropertyAnimation(
+            self._indicator, b"geometry", self
+        )
+        self._indicator_animation.setDuration(150)
+        self._indicator_animation.setEasingCurve(QEasingCurve.OutCubic)
         self.set_active("home")
 
     def set_active(self, key: str):
+        if key not in self._buttons:
+            return
+        changed = key != self._active_key
+        self._active_key = key
         for k, btn in self._buttons.items():
             btn.setProperty("active", k == key)
             btn.style().unpolish(btn)
             btn.style().polish(btn)
             btn.setStyleSheet(btn.styleSheet())
+        self._indicator_pending_animation = changed and self.isVisible()
+        QTimer.singleShot(0, self._sync_indicator)
+
+    def _sync_indicator(self):
+        btn = self._buttons.get(self._active_key)
+        if btn is None or btn.height() <= 0:
+            return
+        top_left = btn.mapTo(self, QPoint(0, 0))
+        target = QRect(2, top_left.y() + 6, 3, max(12, btn.height() - 12))
+        animate = self._indicator_pending_animation and self._indicator.isVisible()
+        self._indicator_pending_animation = False
+        self._indicator_animation.stop()
+        if animate:
+            self._indicator_animation.setStartValue(self._indicator.geometry())
+            self._indicator_animation.setEndValue(target)
+            self._indicator_animation.start()
+        else:
+            self._indicator.setGeometry(target)
+        self._indicator.show()
+        self._indicator.raise_()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._indicator_pending_animation = False
+        QTimer.singleShot(0, self._sync_indicator)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._sync_indicator)
 
     def _on_click(self, key: str):
         self.set_active(key)
@@ -88,14 +134,19 @@ class Sidebar(QWidget):
         if not row:
             return
         text = str(status or "")
-        if any(kw in text for kw in ["认证失败", "过期", "未登录", "Cookie"]):
-            row.set_status("error")
+        lower = text.lower()
+        if (any(kw in text for kw in ["认证失败", "过期", "未登录", "Cookie", "失效"])
+                or any(kw in lower for kw in ["error", "failed", "unauthorized"])):
+            row.set_status("error", text)
+        elif any(kw in text for kw in ["重连", "断线恢复", "稍后重试", "重试间隔"]):
+            row.set_status("reconnecting", text)
         elif any(kw in text for kw in ["连接中", "启动", "正在", "等待", "自动登录中", "同步"]):
-            row.set_status("connecting")
-        elif text.strip() in ("online", "●", "✓") or any(kw in text for kw in ["已连接", "在线", "connected"]):
-            row.set_status("online")
+            row.set_status("connecting", text)
+        elif (text.strip() in ("online", "●", "✓")
+              or any(kw in text for kw in ["已连接", "在线", "connected"])):
+            row.set_status("online", text)
         else:
-            row.set_status("offline")
+            row.set_status("offline", text)
 
     def update_ai_status(self, text: str):
         self.status_ai.setText(f"AI {text}")

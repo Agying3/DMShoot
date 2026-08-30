@@ -51,10 +51,10 @@ class DouyinClient:
             return False, "Cookie 已过期"
         return True, ""
 
-    def start_ws_receiver(self):
+    def start_ws_receiver(self, on_state=None):
         """启动 WebSocket 实时消息接收"""
         from dmshoot.utils.douyin_ws import DouyinWSReceiver
-        self._ws_receiver = DouyinWSReceiver(self._auth)
+        self._ws_receiver = DouyinWSReceiver(self._auth, on_state=on_state)
         self._ws_receiver.start()
 
     @property

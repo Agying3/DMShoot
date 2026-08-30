@@ -1,8 +1,9 @@
 """平台状态点阵指示器 — 2×2 点阵，自绘 + QTimer 驱动
 
-状态语义（set_status 接收四态字符串）:
+状态语义（set_status 接收五态字符串）:
   online      → 4 点全亮，整体微呼吸
   connecting  → 对角两两反相呼吸
+  reconnecting → 4 点顺序追逐
   error       → 第 1 点红色闪烁，其余暗红
   offline     → 4 点暗灰静止
 """
@@ -16,8 +17,17 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
 COLOR = {
     "online":     QColor("#97C459"),
     "connecting": QColor("#EF9F27"),
+    "reconnecting": QColor("#F97316"),
     "error":      QColor("#E24B4A"),
     "offline":    QColor("#888780"),
+}
+
+STATUS_TEXT = {
+    "online": "在线",
+    "connecting": "连接中",
+    "reconnecting": "重连中",
+    "error": "登录失效或连接错误",
+    "offline": "未连接",
 }
 
 
@@ -39,9 +49,10 @@ class StatusDots(QWidget):
 
     def set_status(self, status: str, msg: str = ""):
         self._status = status if status in COLOR else "offline"
+        self.setToolTip(msg or STATUS_TEXT[self._status])
         self._frame = 0
         self._timer.stop()
-        if self._status in ("connecting", "online"):
+        if self._status in ("connecting", "reconnecting", "online"):
             self._timer.start(120)
         elif self._status == "error":
             self._timer.start(400)
@@ -60,6 +71,10 @@ class StatusDots(QWidget):
             ph = (math.sin(f * 0.13) + 1) / 2
             return [0.35 + 0.65 * ph, 0.35 + 0.65 * (1 - ph),
                     0.35 + 0.65 * (1 - ph), 0.35 + 0.65 * ph]
+        if s == "reconnecting":
+            active = f % 4
+            return [1.0 if i == active else (0.55 if i == (active - 1) % 4 else 0.2)
+                    for i in range(4)]
         if s == "error":
             blink = 0.95 if (f // 2) % 2 == 0 else 0.15
             return [blink, 0.22, 0.22, 0.22]
@@ -82,6 +97,7 @@ class PlatformStatusRow(QWidget):
 
     def __init__(self, name: str, parent=None):
         super().__init__(parent)
+        self._display_name = name
         self.dots = StatusDots()
         self.name = QLabel(name)
         self.name.setStyleSheet(
@@ -95,3 +111,6 @@ class PlatformStatusRow(QWidget):
 
     def set_status(self, status: str, msg: str = ""):
         self.dots.set_status(status, msg)
+        state_text = STATUS_TEXT.get(status, STATUS_TEXT["offline"])
+        detail = f"\n{msg}" if msg and msg != state_text else ""
+        self.setToolTip(f"{self._display_name} · {state_text}{detail}")

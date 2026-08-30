@@ -70,9 +70,7 @@ def clear_douyin_db_messages():
     """仅清除 DB 中的抖音历史消息（保留会话列表和缓存文件）"""
     try:
         from dmshoot.storage import database
-        conn = database._get_conn()
-        count = conn.execute("DELETE FROM messages WHERE platform='douyin'").rowcount
-        conn.commit()
+        count = database.delete_messages("douyin")
         logger.success(f"抖音DB消息已清除: {count} 条")
     except Exception as e:
         logger.warning(f"清除DB消息失败: {e}")
@@ -347,13 +345,16 @@ def _parse_and_cache_messages(raw: bytes, my_uid: str):
     """从 protobuf 解析消息并存入全局缓存"""
     global _cached_messages
     try:
-        from dmshoot.utils.proto_msg_parser import extract_messages_from_protobuf
+        from dmshoot.utils.proto_msg_parser import (
+            _message_identity,
+            extract_messages_from_protobuf,
+        )
         parsed = extract_messages_from_protobuf(raw, my_uid)
         if parsed:
             # 去重合并
-            existing_keys = {(m.get('sender_uid',''), m.get('content','')[:60]) for m in _cached_messages}
+            existing_keys = {_message_identity(m) for m in _cached_messages}
             for m in parsed:
-                key = (m['sender_uid'], m['content'][:60])
+                key = _message_identity(m)
                 if key not in existing_keys:
                     _cached_messages.append(m)
                     existing_keys.add(key)

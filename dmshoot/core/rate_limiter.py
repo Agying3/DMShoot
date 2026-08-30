@@ -42,9 +42,11 @@ class RateLimiter:
     @property
     def available(self) -> float:
         with self._lock:
-            now = time.monotonic()
-            elapsed = now - self._last_refill
-            return min(self._burst, self._tokens + elapsed * self._rate)
+            return self._available_unlocked()
+
+    def _available_unlocked(self) -> float:
+        elapsed = time.monotonic() - self._last_refill
+        return min(self._burst, self._tokens + elapsed * self._rate)
 
     @property
     def stats(self) -> dict:
@@ -52,7 +54,7 @@ class RateLimiter:
             return {
                 "rate": self._rate,
                 "burst": self._burst,
-                "available": round(self.available, 1),
+                "available": round(self._available_unlocked(), 1),
                 "throttled": self._wait_count,
                 "sent": self._total_acquired,
             }

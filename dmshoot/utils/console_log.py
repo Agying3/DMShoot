@@ -121,8 +121,17 @@ class ModuleLogger(logging.Logger):
         if self.isEnabledFor(SUCCESS):
             self._log(SUCCESS, msg, args, **kwargs)
 
+    def debug(self, msg, *args, **kwargs):
+        if is_log_enabled("debug") and self.isEnabledFor(logging.DEBUG):
+            self._log(logging.DEBUG, msg, args, **kwargs)
+
+    def debug_category(self, category: str, msg: str):
+        if is_log_enabled(category) and self.isEnabledFor(logging.DEBUG):
+            self._log(logging.DEBUG, msg, ())
+
     def ai_thinking(self, msg: str):
-        self._log(logging.INFO, msg, (), extra={"thinking": True})
+        if is_log_enabled("ai_thinking"):
+            self._log(logging.INFO, msg, (), extra={"thinking": True})
 
     def ai_msg(self, msg: str):
         self._log(logging.INFO, msg, (), extra={"ai_msg": True})
@@ -170,13 +179,21 @@ def raw_header(text: str, width: int = 50):
 
 
 # ── 日志级别过滤 ──
-_log_levels: dict[str, bool] = {}
+_log_levels: dict[str, bool] = {
+    "ai_thinking": False,
+    "message_sync": False,
+    "heartbeat": False,
+    "polling": False,
+    "ws_batch": False,
+    "api_timing": False,
+    "debug": False,
+}
 
 def set_log_level(category: str, enabled: bool):
     _log_levels[category] = enabled
 
 def is_log_enabled(category: str) -> bool:
-    return _log_levels.get(category, True)
+    return _log_levels.get(category, False)
 
 
 # ── Rich Handler（桥接 logging → Rich Console）──

@@ -142,15 +142,23 @@ class BaseAdapter(_ThreadBase):
             now = _time.time()
             if now - last_health >= 60:
                 last_health = now
-                from dmshoot.utils.console_log import is_log_enabled
-                if is_log_enabled("heartbeat"):
-                    logger.debug(f"[{self.platform_name}] ♥")
+                logger.debug_category("heartbeat", f"[{self.platform_name}] heartbeat")
 
     def _set_status(self, status: str, msg: str = ""):
         self.bus.set_platform_status(self.platform_name, status, msg)
 
     def _on_message(self, msg: Message):
-        """子类收到消息后调用此方法，推送至消息总线"""
+        """在适配器线程只落库一次，再将新消息推送到总线。"""
+        try:
+            from dmshoot.storage import database
+            inserted, unread_count = database.save_platform_message(msg)
+        except Exception:
+            logger.exception(f"[{self.platform_name}] 消息持久化失败")
+            return
+        if not inserted:
+            return
+        if isinstance(msg.raw, dict):
+            msg.raw["_unread_count"] = unread_count
         self.bus.emit_message(msg)
 
     def stop(self):

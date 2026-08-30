@@ -10,7 +10,7 @@ from typing import Optional
 
 from dmshoot.core.adapter import BaseAdapter, ErrorCategory, ReconnectBackoff
 from dmshoot.core.message import Message
-from dmshoot.utils.console_log import get_logger, is_log_enabled
+from dmshoot.utils.console_log import get_logger
 
 logger = get_logger(__name__)
 
@@ -222,7 +222,7 @@ class BilibiliAdapter(BaseAdapter):
                     sender_name=peer_name if not parsed.is_self else parsed.sender_name,
                     sender_id=parsed.sender_id, content=parsed.content,
                     msg_type=parsed.msg_type, timestamp=parsed.timestamp,
-                    is_self=parsed.is_self,
+                    is_self=parsed.is_self, message_key=parsed.message_key,
                 ))
                 last_text, last_time = parsed.content[:30], parsed.timestamp
                 if m.get("msg_seqno", 0): seqs.append(m["msg_seqno"])
@@ -252,6 +252,10 @@ class BilibiliAdapter(BaseAdapter):
         self._state["replied"] = list(self._replied)[-5000:]
         _save_state(self._state)
         logger.success(f"B站同步完成: {len(batch_upserts)}会话, {total_msgs}消息")
+        logger.debug_category(
+            "message_sync",
+            f"B站历史同步: 会话={len(batch_upserts)} 消息={total_msgs}",
+        )
 
     def send_message(self, session_id: str, text: str) -> bool:
         """同步发送 — 保持兼容（用 bsync 封装）"""
@@ -314,6 +318,8 @@ class BilibiliAdapter(BaseAdapter):
         if not ts:
             _debug(f"  时间戳缺失 msg_keys={list(msg.keys())[:10]}")
 
+        seq_id = msg.get("msg_seqno", 0)
+        talker_id = msg.get("talker_id", sender_uid)
         return Message(
             platform="bilibili",
             msg_type=msg_type,
@@ -322,9 +328,10 @@ class BilibiliAdapter(BaseAdapter):
                 peer_name if (not is_self and peer_name) else
                 msg.get("sender_name") or f"粉丝{sender_uid}"
             ),
-            session_id=f"bilibili:{msg.get('talker_id', sender_uid)}",
+            session_id=f"bilibili:{talker_id}",
             content=text,
-            seq_id=msg.get("msg_seqno", 0),
+            seq_id=seq_id,
+            message_key=f"bilibili:{talker_id}:{seq_id}" if seq_id else "",
             is_self=is_self,
             timestamp=float(ts) if ts else 0.0,
         )
@@ -341,8 +348,7 @@ class BilibiliAdapter(BaseAdapter):
             sessions = data.get("session_list", [])
             total_unread = sum(s.get("unread_count", 0) for s in sessions)
             if total_unread > 0:
-                if is_log_enabled("polling"):
-                    logger.debug(f"B站轮询: {len(sessions)}会话, 未读={total_unread}")
+                logger.debug_category("polling", f"B站轮询: {len(sessions)}会话, 未读={total_unread}")
 
             # asyncio.gather 并发拉取
             async def poll_one(s):
@@ -379,19 +385,16 @@ class BilibiliAdapter(BaseAdapter):
                     if dm_msg is None: continue
 
                     if not dm_msg.is_self:
-                        logger.recv("B站", dm_msg.sender_name, dm_msg.content[:200])
-                        self._on_message(dm_msg)
-                        # 有真名时更新 sessions 表，确保通讯录显示真名
+                        # 在消息事务前替换旧占位名，变更时通知联系人列表刷新。
                         if real_name and not real_name.startswith("用户") and not real_name.startswith("粉丝"):
                             try:
-                                db = __import__('dmshoot.storage.database', fromlist=['database'])
-                                db.get_conn().execute(
-                                    "UPDATE sessions SET peer_name=? WHERE session_id=? AND (peer_name LIKE '用户%' OR peer_name LIKE '粉丝%' OR peer_name LIKE 'fans_%')",
-                                    (real_name, dm_msg.session_id)
-                                )
-                                db.get_conn().commit()
+                                from dmshoot.storage import database as db
+                                if db.update_session_name_if_placeholder(dm_msg.session_id, real_name):
+                                    self.bus.notify_session_updated(dm_msg.session_id)
                             except Exception:
                                 pass
+                        logger.recv("B站", dm_msg.sender_name, dm_msg.content[:200])
+                        self._on_message(dm_msg)
                     if seq:
                         self._replied.add(seq)
                         if seq > self._session_last_seq.get(talker_id, 0):
@@ -430,6 +433,7 @@ class BilibiliAdapter(BaseAdapter):
             _elapsed = (_time.perf_counter() - _start) * 1000
             from dmshoot.core.perf_monitor import get_monitor
             get_monitor().record_api(_elapsed)
+            logger.debug_category("api_timing", f"B站轮询耗时: {_elapsed:.1f}ms")
 
     async def _sleep(self, seconds: float):
         """可中断 sleep — 收到 stop 信号时立即返回"""

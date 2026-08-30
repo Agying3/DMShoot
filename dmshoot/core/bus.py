@@ -67,6 +67,7 @@ if _HAS_QT:
         log = QtSignal(str, str, str)
         ai_request = QtSignal(Message)
         ai_response = QtSignal(str, str, str)
+        session_updated = QtSignal(str)
 
         _instance: Optional["_QtMessageBus"] = None
         _lock = threading.Lock()
@@ -90,6 +91,9 @@ if _HAS_QT:
             self.platform_status.emit(platform, status, msg)
             self.log.emit("INFO", platform, f"状态变更: {status} {msg}")
 
+        def notify_session_updated(self, session_id: str):
+            self.session_updated.emit(session_id)
+
     MessageBus = _QtMessageBus
 
 else:
@@ -101,6 +105,7 @@ else:
         log: _PySignal
         ai_request: _PySignal
         ai_response: _PySignal
+        session_updated: _PySignal
 
         _instance: Optional["_PyMessageBus"] = None
         _lock = threading.Lock()
@@ -112,6 +117,7 @@ else:
             self.log = _PySignal(str, str, str)
             self.ai_request = _PySignal(Message)
             self.ai_response = _PySignal(str, str, str)
+            self.session_updated = _PySignal(str)
 
         @classmethod
         def instance(cls) -> "_PyMessageBus":
@@ -131,5 +137,8 @@ else:
         def set_platform_status(self, platform: str, status: str, msg: str = ""):
             self.platform_status.emit(platform, status, msg)
             self.log.emit("INFO", platform, f"状态变更: {status} {msg}")
+
+        def notify_session_updated(self, session_id: str):
+            self.session_updated.emit(session_id)
 
     MessageBus = _PyMessageBus

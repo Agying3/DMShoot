@@ -6,6 +6,7 @@ from PySide6.QtCore import QThread, QTimer, Signal as QtSignal
 
 from dmshoot.storage import database
 from dmshoot.utils.console_log import raw_header, raw_sep, _console
+from dmshoot.gui.widgets.toast import show_toast
 
 _COOKIE_PLATFORMS = frozenset({"douyin", "kuaishou"})
 
@@ -150,6 +151,7 @@ class AuthController:
                 hint = "Cookie 已过期，请重新扫码" if platform in _COOKIE_PLATFORMS else (msg or "验证失败")
                 self._page_login.set_status(platform, f"{name} · {hint}")
                 self._sidebar.update_status(platform, "✕")
+                show_toast(self._stack, f"{name}登录已失效，请重新扫码", "warning", 2800)
             worker.deleteLater()
             # 给 Qt 一次空闲机会刷新首屏和状态，再处理下一个平台。
             QTimer.singleShot(250, on_done)
@@ -183,6 +185,7 @@ class AuthController:
         self._page_login.on_connected(platform)
         self._sidebar.set_active("home")
         self._stack.setCurrentIndex(0)
+        show_toast(self._stack, f"{name}登录信息已保存", "success")
         enabled = {"douyin": self._config.douyin_enabled,
                     "bilibili": self._config.bilibili_enabled,
                     "kuaishou": self._config.ks_enabled}.get(platform, False)

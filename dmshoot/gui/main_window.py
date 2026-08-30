@@ -27,7 +27,7 @@ from dmshoot.gui.pages.login_page import LoginPage
 from dmshoot.gui.pages.deepseek_page import DeepSeekPage
 from dmshoot.gui.pages.prompt_page import PromptPage
 from dmshoot.storage import database
-from dmshoot.storage.models import ChatMessage, AppConfig, SessionRecord
+from dmshoot.storage.models import ChatMessage, AppConfig
 from dmshoot.ai.backend import get_ai, init_ai
 from dmshoot.ai.prompts import load_prompts, load_behavior_prompts
 from dmshoot.plugins.manager import PluginManager
@@ -36,6 +36,7 @@ from dmshoot.core.adapter_manager import AdapterManager
 from dmshoot.gui.auth_controller import AuthController
 from dmshoot.gui.signal_wiring import SignalWiring
 from dmshoot.gui.workers.ai_worker import AIWorker, ActiveAIWorker
+from dmshoot.gui.widgets.toast import show_toast
 
 logger = get_logger(__name__)
 
@@ -593,7 +594,6 @@ class MainWindow(QMainWindow):
         dialog = self._settings_class(self.config, self)
         self._settings_dialog = dialog
         dialog.cache_cleared.connect(self._on_cache_cleared)
-        dialog.go_send_command.connect(self._on_go_send_command)
         dialog.finished.connect(
             lambda result, d=dialog: self._on_settings_closed(result, d)
         )
@@ -606,28 +606,11 @@ class MainWindow(QMainWindow):
                 setattr(self.config, field_name, getattr(latest, field_name))
             self._sync_config_to_ui()
             self._apply_wallpaper()
+            show_toast(self, "设置已保存", "success")
         if dialog is not None:
             dialog.deleteLater()
             if self._settings_dialog is dialog:
                 self._settings_dialog = None
-
-    def _on_go_send_command(self, data: dict):
-        """Go 后端 WS 回传发消息指令 → 调用平台 adapter 实际发送"""
-        platform = data.get("platform", "")
-        session_id = data.get("session_id", "")
-        content = data.get("content", "")
-        if not platform or not session_id or not content:
-            logger.warning(f"Go send_command 数据不完整: {data}")
-            return
-        adapter = self._adapters.get(platform)
-        if adapter:
-            ok = adapter.send_message(session_id, content)
-            if ok:
-                logger.info(f"Go→Python 回传发送成功 [{platform}] {content[:30]}")
-            else:
-                logger.warning(f"Go→Python 回传发送失败 [{platform}] {content[:30]}")
-        else:
-            logger.warning(f"Go send_command 找不到适配器: {platform}")
 
     # ── 配置同步 ──
 
@@ -662,6 +645,13 @@ class MainWindow(QMainWindow):
 
         self.page_login.auto_monitor.setChecked(c.bilibili_auto_monitor)
         self.page_home._load_contacts()
+
+        from dmshoot.core.rate_limiter import get_limiter
+        get_limiter("douyin").set_rate(c.rate_douyin)
+        get_limiter("bilibili").set_rate(c.rate_bilibili)
+        get_limiter("kuaishou").set_rate(c.rate_kuaishou)
+        from dmshoot.core.perf_monitor import get_monitor
+        get_monitor().set_enabled(c.perf_monitor_enabled)
 
         # 恢复调试日志开关
         import json as _json
@@ -702,7 +692,11 @@ class MainWindow(QMainWindow):
         self.config.api_key = api_key
         self.config.base_url = base_url or "https://api.deepseek.com"
         self.config.model = model or "deepseek-v4-flash"
-        database.save_config(self.config)
+        database.update_config_fields({
+            "api_key": self.config.api_key,
+            "base_url": self.config.base_url,
+            "model": self.config.model,
+        })
         self.page_deepseek.set_status("连接中...")
         self.page_deepseek.set_status_color("")
 
@@ -743,7 +737,7 @@ class MainWindow(QMainWindow):
         if name == self.config.prompt_preset:
             return
         self.config.prompt_preset = name
-        database.save_config(self.config)
+        database.update_config_field("prompt_preset", name)
         self.page_prompt.set_content(load_prompts().get(name, ""))
         ai = get_ai()
         if ai.configured:
@@ -757,7 +751,7 @@ class MainWindow(QMainWindow):
         if name == self.config.behavior_preset:
             return
         self.config.behavior_preset = name
-        database.save_config(self.config)
+        database.update_config_field("behavior_preset", name)
         bp = load_behavior_prompts().get(name, "")
         ai = get_ai()
         if ai.configured:
@@ -783,28 +777,7 @@ class MainWindow(QMainWindow):
     def _on_new_message(self, msg: Message):
         if not msg.content.strip():
             return
-
-        cm = ChatMessage(session_id=msg.session_id, sender_name=msg.sender_name,
-                         sender_id=msg.sender_id, content=msg.content, msg_type=msg.msg_type,
-                         is_self=msg.is_self, timestamp=msg.timestamp)
-
-        if msg.is_self:
-            inserted = database.save_message(cm)
-            new_unread = -1
-        else:
-            session = SessionRecord(
-                session_id=msg.session_id,
-                platform=msg.platform,
-                peer_name=msg.sender_name,
-                peer_id=msg.sender_id,
-                last_message=msg.content[:50],
-                last_time=msg.timestamp,
-            )
-            inserted, new_unread = database.save_incoming_message(session, cm)
-
-        # 重复推送不刷新 UI，也不能再次触发自动回复。
-        if not inserted:
-            return
+        new_unread = msg.raw.get("_unread_count", -1) if isinstance(msg.raw, dict) else -1
 
         # 性能监控 — 记录消息
         from dmshoot.core.perf_monitor import get_monitor
@@ -813,6 +786,9 @@ class MainWindow(QMainWindow):
         # 首页气泡（add_message 内部有缓存去重）
         self.page_home.add_message(msg.session_id, msg.sender_name, msg.content,
                                    timestamp=msg.timestamp,
+                                   sender_id=msg.sender_id,
+                                   message_key=msg.message_key,
+                                   is_self=msg.is_self,
                                    unread_count=new_unread if not msg.is_self else -1)
 
         # 自己的消息不触发AI
@@ -927,6 +903,7 @@ class MainWindow(QMainWindow):
         persona = self.config.prompt_preset or "AI"
         logger.error(f"[发送失败] {platform} → session={session_id}: '{text[:30]}'")
         self.bus.log.emit("ERROR", persona, f"发送失败: {text[:20]}...")
+        show_toast(self, "消息发送失败，请检查平台连接", "warning", 2800)
 
     # ── AI 主动消息 ──
 

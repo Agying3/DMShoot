@@ -109,6 +109,7 @@ def init_database():
             is_self INTEGER DEFAULT 0,
             is_auto INTEGER DEFAULT 0,
             persona TEXT DEFAULT '',
+            message_key TEXT DEFAULT '',
             timestamp REAL NOT NULL
         )
     """)
@@ -129,6 +130,11 @@ def init_database():
     # 迁移: 给旧 messages 表加 persona 列（AI 回复角色名）
     try:
         cur.execute("ALTER TABLE messages ADD COLUMN persona TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
+
+    try:
+        cur.execute("ALTER TABLE messages ADD COLUMN message_key TEXT DEFAULT ''")
     except sqlite3.OperationalError:
         pass  # 列已存在
 
@@ -157,11 +163,16 @@ def init_database():
         CREATE INDEX IF NOT EXISTS idx_messages_platform
         ON messages(platform, timestamp DESC)
     """)
-    # 去重（同会话+同内容+同方向=重复）
+    # 服务端消息 ID 优先；无 ID 的历史数据用精确时间戳兜底。
     cur.execute("DROP INDEX IF EXISTS idx_messages_dedup")
     cur.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_dedup
-        ON messages(session_id, content, is_self)
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_message_key
+        ON messages(message_key) WHERE message_key != ''
+    """)
+    cur.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_fallback_dedup
+        ON messages(session_id, sender_id, content, is_self, timestamp)
+        WHERE message_key = ''
     """)
 
     conn.commit()
@@ -283,6 +294,15 @@ def delete_sessions(platform: str):
         conn.commit()
 
 
+def delete_messages(platform: str) -> int:
+    """只删除指定平台消息，保留会话并与其他写操作串行。"""
+    conn = _get_conn()
+    with _lock:
+        cur = conn.execute("DELETE FROM messages WHERE platform=?", (platform,))
+        conn.commit()
+    return cur.rowcount
+
+
 def update_session_name_avatar(session_id: str, peer_name: str, avatar_url: str):
     """仅更新会话的昵称和头像（不覆写 last_message/last_time）"""
     conn = _get_conn()
@@ -296,6 +316,20 @@ def update_session_name_avatar(session_id: str, peer_name: str, avatar_url: str)
                 avatar_url=excluded.avatar_url
         """, (session_id, peer_name, avatar_url))
         conn.commit()
+
+
+def update_session_name_if_placeholder(session_id: str, peer_name: str) -> bool:
+    """仅将占位昵称替换为平台返回的真实昵称。"""
+    conn = _get_conn()
+    with _lock:
+        cur = conn.execute("""
+            UPDATE sessions SET peer_name=?
+            WHERE session_id=? AND (
+                peer_name LIKE '用户%' OR peer_name LIKE '粉丝%' OR peer_name LIKE 'fans_%'
+            )
+        """, (peer_name, session_id))
+        conn.commit()
+    return cur.rowcount > 0
 
 
 def set_active_messaging(session_id: str, enabled: bool):
@@ -346,12 +380,13 @@ def save_message(msg: ChatMessage) -> bool:
     with _lock:
         cur = conn.execute("""
             INSERT OR IGNORE INTO messages (session_id, platform, sender_name, sender_id,
-                content, msg_type, is_self, is_auto, persona, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                content, msg_type, is_self, is_auto, persona, timestamp, message_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             msg.session_id, _platform_from(msg.session_id),
             msg.sender_name, msg.sender_id, msg.content,
-            msg.msg_type, int(msg.is_self), int(msg.is_auto), msg.persona, msg.timestamp
+            msg.msg_type, int(msg.is_self), int(msg.is_auto), msg.persona, msg.timestamp,
+            msg.message_key,
         ))
         inserted = cur.rowcount > 0
         conn.commit()
@@ -375,12 +410,13 @@ def save_incoming_message(session: SessionRecord, msg: ChatMessage) -> tuple[boo
         try:
             cur = conn.execute("""
                 INSERT OR IGNORE INTO messages (session_id, platform, sender_name, sender_id,
-                    content, msg_type, is_self, is_auto, persona, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    content, msg_type, is_self, is_auto, persona, timestamp, message_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 msg.session_id, _platform_from(msg.session_id),
                 msg.sender_name, msg.sender_id, msg.content,
                 msg.msg_type, int(msg.is_self), int(msg.is_auto), msg.persona, msg.timestamp,
+                msg.message_key,
             ))
             inserted = cur.rowcount > 0
             if inserted:
@@ -390,7 +426,19 @@ def save_incoming_message(session: SessionRecord, msg: ChatMessage) -> tuple[boo
                         active_messaging, avatar_url)
                     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
                     ON CONFLICT(session_id) DO UPDATE SET
-                        peer_name=excluded.peer_name,
+                        peer_name=CASE
+                            WHEN (
+                                excluded.peer_name LIKE '用户%'
+                                OR excluded.peer_name LIKE '粉丝%'
+                                OR excluded.peer_name LIKE 'fans_%'
+                            )
+                              AND sessions.peer_name != ''
+                              AND sessions.peer_name NOT LIKE '用户%'
+                              AND sessions.peer_name NOT LIKE '粉丝%'
+                              AND sessions.peer_name NOT LIKE 'fans_%'
+                            THEN sessions.peer_name
+                            ELSE excluded.peer_name
+                        END,
                         peer_id=excluded.peer_id,
                         last_message=excluded.last_message,
                         last_time=excluded.last_time,
@@ -421,6 +469,37 @@ def save_incoming_message(session: SessionRecord, msg: ChatMessage) -> tuple[boo
     return inserted, unread_count
 
 
+def save_platform_message(msg) -> tuple[bool, int]:
+    """统一保存适配器消息，桌面与无界面运行方式共用。"""
+    content = getattr(msg, "content", "")
+    if not content or not content.strip():
+        return False, -1
+
+    chat_message = ChatMessage(
+        session_id=msg.session_id,
+        sender_name=msg.sender_name,
+        sender_id=msg.sender_id,
+        content=content,
+        msg_type=msg.msg_type,
+        is_self=msg.is_self,
+        is_auto=getattr(msg, "is_auto_reply", False),
+        timestamp=msg.timestamp,
+        message_key=getattr(msg, "message_key", ""),
+    )
+    if msg.is_self:
+        return save_message(chat_message), -1
+
+    session = SessionRecord(
+        session_id=msg.session_id,
+        platform=msg.platform,
+        peer_name=msg.sender_name,
+        peer_id=msg.sender_id,
+        last_message=content[:50],
+        last_time=msg.timestamp,
+    )
+    return save_incoming_message(session, chat_message)
+
+
 def save_messages_batch(msgs: list[ChatMessage]) -> int:
     """批量保存消息，跳过重复。返回实际写入条数"""
     if not msgs:
@@ -432,13 +511,13 @@ def save_messages_batch(msgs: list[ChatMessage]) -> int:
         data = [
             (m.session_id, _platform_from(m.session_id),
              m.sender_name, m.sender_id, m.content,
-             m.msg_type, int(m.is_self), int(m.is_auto), m.persona, m.timestamp)
+             m.msg_type, int(m.is_self), int(m.is_auto), m.persona, m.timestamp, m.message_key)
             for m in msgs
         ]
         cur = conn.executemany("""
             INSERT OR IGNORE INTO messages (session_id, platform, sender_name, sender_id,
-                content, msg_type, is_self, is_auto, persona, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                content, msg_type, is_self, is_auto, persona, timestamp, message_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, data)
         conn.commit()
     _elapsed = (_time.perf_counter() - _start) * 1000
@@ -482,6 +561,7 @@ def _row_to_message(row) -> ChatMessage:
         is_auto=bool(row["is_auto"]),
         persona=row["persona"] if "persona" in row.keys() else "",
         timestamp=row["timestamp"],
+        message_key=row["message_key"] if "message_key" in row.keys() else "",
     )
 
 
@@ -514,28 +594,36 @@ def load_config() -> AppConfig:
 
 def save_config(config: AppConfig):
     """保存全部配置到数据库"""
+    update_config_fields({
+        field_name: getattr(config, field_name)
+        for field_name in AppConfig.__dataclass_fields__
+    })
+
+
+def update_config_fields(values: dict):
+    """在一个事务中只更新指定配置字段，避免覆盖并发认证更新。"""
     import json as _json
+    unknown = set(values) - set(AppConfig.__dataclass_fields__)
+    if unknown:
+        raise KeyError(f"未知配置字段: {', '.join(sorted(unknown))}")
+
+    rows = []
+    for key, value in values.items():
+        if isinstance(value, list):
+            value = _json.dumps(value)
+        else:
+            value = str(value)
+        rows.append((key, value))
+
     conn = _get_conn()
     with _lock:
-        for field_name in AppConfig.__dataclass_fields__:
-            value = getattr(config, field_name)
-            if isinstance(value, list):
-                value = _json.dumps(value)
-            else:
-                value = str(value)
-            conn.execute("""
+        conn.executemany("""
                 INSERT INTO config (key, value) VALUES (?, ?)
                 ON CONFLICT(key) DO UPDATE SET value=excluded.value
-            """, (field_name, value))
+            """, rows)
         conn.commit()
 
 
 def update_config_field(key: str, value: str):
     """原子更新单个配置字段（避免并发覆写）"""
-    conn = _get_conn()
-    with _lock:
-        conn.execute("""
-            INSERT INTO config (key, value) VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET value=excluded.value
-        """, (key, value))
-        conn.commit()
+    update_config_fields({key: value})

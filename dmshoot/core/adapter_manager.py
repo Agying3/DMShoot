@@ -98,7 +98,7 @@ class AdapterManager:
     def on_auto_monitor_toggle(self, checked: bool):
         cfg = self._refresh_config()
         cfg.bilibili_auto_monitor = checked
-        database.save_config(cfg)
+        database.update_config_field("bilibili_auto_monitor", checked)
 
     def stop_all(self):
         """关闭时停止所有适配器"""

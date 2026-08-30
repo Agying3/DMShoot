@@ -124,7 +124,11 @@ async def login_scan(req: LoginScanRequest):
                     _config.douyin_web_protect = result.get("web_protect", "")
                     _config.douyin_keys = result.get("keys", "")
                     from dmshoot.storage import database
-                    database.save_config(_config)
+                    database.update_config_fields({
+                        "douyin_cookie": _config.douyin_cookie,
+                        "douyin_web_protect": _config.douyin_web_protect,
+                        "douyin_keys": _config.douyin_keys,
+                    })
                     await bridge.push_login_ok(req.platform)
                 else:
                     await bridge.push_login_fail(req.platform, "扫码失败")
@@ -141,7 +145,14 @@ async def login_scan(req: LoginScanRequest):
                     _config.bilibili_dedeuserid = cookies["dedeuserid"]
                     _config.bilibili_ac_time_value = cookies["ac_time_value"]
                     from dmshoot.storage import database
-                    database.save_config(_config)
+                    database.update_config_fields({
+                        "bilibili_sessdata": _config.bilibili_sessdata,
+                        "bilibili_jct": _config.bilibili_jct,
+                        "bilibili_buvid3": _config.bilibili_buvid3,
+                        "bilibili_buvid4": _config.bilibili_buvid4,
+                        "bilibili_dedeuserid": _config.bilibili_dedeuserid,
+                        "bilibili_ac_time_value": _config.bilibili_ac_time_value,
+                    })
                     await bridge.push_login_ok(req.platform)
                 else:
                     await bridge.push_login_fail(req.platform, "扫码失败")
@@ -326,8 +337,9 @@ async def get_config():
         temperature=getattr(_config, "temperature", 0.7),
         max_tokens=getattr(_config, "max_tokens", 1024),
         theme=getattr(_config, "theme", "dark"),
-        rate_douyin=getattr(_config, "rate_douyin", 3),
-        rate_bilibili=getattr(_config, "rate_bilibili", 3),
+        rate_douyin=_config.rate_douyin,
+        rate_bilibili=_config.rate_bilibili,
+        rate_kuaishou=_config.rate_kuaishou,
     ).model_dump()
 
 
@@ -337,12 +349,16 @@ async def update_config(req: ConfigUpdateRequest):
     updates = req.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(400, detail={"error": "empty_request"})
-    for k, v in updates.items():
-        if hasattr(_config, k):
-            setattr(_config, k, v)
-        else:
-            raise HTTPException(400, detail={"error": "invalid_field", "detail": k})
-    database.save_config(_config)
+    for key in updates:
+        if not hasattr(_config, key):
+            raise HTTPException(400, detail={"error": "invalid_field", "detail": key})
+    database.update_config_fields(updates)
+    for key, value in updates.items():
+        setattr(_config, key, value)
+    from dmshoot.core.rate_limiter import get_limiter
+    get_limiter("douyin").set_rate(_config.rate_douyin)
+    get_limiter("bilibili").set_rate(_config.rate_bilibili)
+    get_limiter("kuaishou").set_rate(_config.rate_kuaishou)
     return {"ok": True}
 
 

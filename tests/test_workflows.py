@@ -252,6 +252,82 @@ class TestMessageHistory:
         assert first is True
         assert second is False  # 去重生效
 
+    def test_same_text_at_different_times_is_not_duplicate(self, temp_db):
+        """用户稍后再次发送相同文本时，两条消息都必须保留。"""
+        from dmshoot.storage import database
+        from dmshoot.storage.models import ChatMessage
+
+        first = ChatMessage(
+            session_id="test:repeat", sender_name="User", sender_id="1",
+            content="你好", timestamp=1000.0,
+        )
+        second = ChatMessage(
+            session_id="test:repeat", sender_name="User", sender_id="1",
+            content="你好", timestamp=1001.0,
+        )
+
+        assert database.save_message(first) is True
+        assert database.save_message(second) is True
+        assert len(database.get_messages("test:repeat")) == 2
+
+    def test_server_message_key_deduplicates_repush(self, temp_db):
+        """相同服务端消息 ID 即使内容或时间变化也只能写入一次。"""
+        from dmshoot.storage import database
+        from dmshoot.storage.models import ChatMessage
+
+        first = ChatMessage(
+            session_id="douyin:peer", sender_name="User", sender_id="1",
+            content="hello", timestamp=1000.0, message_key="douyin:server-1",
+        )
+        repush = ChatMessage(
+            session_id="douyin:peer", sender_name="User", sender_id="1",
+            content="hello edited", timestamp=1001.0, message_key="douyin:server-1",
+        )
+
+        assert database.save_message(first) is True
+        assert database.save_message(repush) is False
+        assert len(database.get_messages("douyin:peer")) == 1
+
+    def test_bus_message_uses_shared_persistence_path(self, temp_db):
+        """桌面消息统一经过同一条持久化事务。"""
+        from dmshoot.core.message import Message
+        from dmshoot.storage import database
+
+        msg = Message(
+            platform="douyin", msg_type="text", sender_id="1",
+            sender_name="User", session_id="douyin:peer", content="hello",
+            timestamp=1000.0, message_key="douyin:shared-1",
+        )
+
+        inserted, unread = database.save_platform_message(msg)
+        duplicate, _ = database.save_platform_message(msg)
+
+        assert inserted is True
+        assert unread == 1
+        assert duplicate is False
+        assert len(database.get_messages("douyin:peer")) == 1
+
+    def test_adapter_persists_once_before_publishing(self, qapp, temp_db):
+        """适配器线程落库后再发总线，重复推送不会再次进入 GUI。"""
+        from dmshoot.core.adapter import BaseAdapter
+        from dmshoot.core.message import Message
+        from dmshoot.storage import database
+
+        bus = MagicMock()
+        adapter = BaseAdapter(bus=bus)
+        msg = Message(
+            platform="douyin", msg_type="text", sender_id="1",
+            sender_name="User", session_id="douyin:adapter", content="hello",
+            timestamp=1000.0, message_key="douyin:adapter-1",
+        )
+
+        adapter._on_message(msg)
+        adapter._on_message(msg)
+
+        bus.emit_message.assert_called_once_with(msg)
+        assert msg.raw["_unread_count"] == 1
+        assert len(database.get_messages("douyin:adapter")) == 1
+
     def test_unread_count_increments(self, temp_db):
         """L11: 新消息 → increment_unread → 计数正确"""
         from dmshoot.storage import database
@@ -298,6 +374,196 @@ class TestMessageHistory:
         assert database.get_sessions("test")[0].unread_count == 1
         assert len(database.get_messages(sid)) == 1
 
+    def test_placeholder_name_does_not_replace_real_name(self, temp_db):
+        """后续占位昵称不能覆盖已经补全的真实昵称。"""
+        from dmshoot.storage import database
+        from dmshoot.storage.models import ChatMessage, SessionRecord
+
+        sid = "douyin:real-name"
+        database.upsert_session(SessionRecord(
+            session_id=sid, platform="douyin", peer_name="Alice", peer_id="1",
+            last_message="", last_time=0,
+        ))
+        database.save_incoming_message(
+            SessionRecord(
+                session_id=sid, platform="douyin", peer_name="用户1", peer_id="1",
+                last_message="hello", last_time=1000,
+            ),
+            ChatMessage(
+                session_id=sid, sender_name="用户1", sender_id="1",
+                content="hello", timestamp=1000,
+            ),
+        )
+
+        assert database.get_sessions("douyin")[0].peer_name == "Alice"
+
+    def test_delete_messages_preserves_sessions(self, temp_db):
+        """后台清缓存只删消息，不删除联系人。"""
+        from dmshoot.storage import database
+        from dmshoot.storage.models import ChatMessage, SessionRecord
+
+        sid = "douyin:cache-clear"
+        database.upsert_session(SessionRecord(
+            session_id=sid, platform="douyin", peer_name="Alice", peer_id="1",
+            last_message="hello", last_time=1000,
+        ))
+        database.save_message(ChatMessage(
+            session_id=sid, sender_name="Alice", sender_id="1",
+            content="hello", timestamp=1000,
+        ))
+
+        assert database.delete_messages("douyin") == 1
+        assert len(database.get_messages(sid)) == 0
+        assert len(database.get_sessions("douyin")) == 1
+
+
+@pytest.mark.gui
+class TestSettingsOwnership:
+    def test_save_preserves_cookie_updated_while_dialog_is_open(self, qapp, qtbot, temp_db):
+        """设置草稿只能合并自己拥有的字段，不能覆盖并发扫码结果。"""
+        from dmshoot.gui.settings_dialog import SettingsDialog
+        from dmshoot.storage import database
+        from dmshoot.storage.models import AppConfig
+
+        database.save_config(AppConfig(douyin_cookie="old-cookie"))
+        dialog = SettingsDialog(database.load_config())
+        qtbot.addWidget(dialog)
+
+        database.update_config_field("douyin_cookie", "new-cookie")
+        dialog.rate_douyin.setValue(7)
+        with patch.object(
+            database, "update_config_fields", wraps=database.update_config_fields
+        ) as update_fields:
+            dialog._on_save()
+
+        saved = database.load_config()
+        assert saved.douyin_cookie == "new-cookie"
+        assert saved.rate_douyin == 7
+        updated_keys = set(update_fields.call_args.args[0])
+        assert "douyin_cookie" not in updated_keys
+        assert "bilibili_sessdata" not in updated_keys
+        assert not hasattr(dialog, "dy_cookie")
+        assert not hasattr(dialog, "_backend_combo")
+
+
+class TestDouyinWebSocket:
+    def test_receiver_wakes_consumer_and_limits_batch(self):
+        import threading
+        from dmshoot.utils.douyin_ws import DouyinWSReceiver
+
+        receiver = DouyinWSReceiver(object())
+        woke = threading.Event()
+        receiver.set_wakeup_callback(woke.set)
+        for index in range(3):
+            receiver._queue.put({"id": index})
+        receiver._notify_wakeup()
+
+        assert woke.wait(0.2)
+        assert len(receiver.get_messages_batch(2)) == 2
+        assert receiver.queue_size == 1
+
+    def test_same_text_with_distinct_server_ids_is_emitted_twice(self):
+        import asyncio
+        from dmshoot.plugins.douyin.adapter import DouyinAdapter
+
+        class FakeWS:
+            def __init__(self):
+                self.entries = [
+                    {"sender_uid": "123", "content": "你好", "conversation_id": "c1",
+                     "msg_index": 1, "server_message_id": "101", "timestamp": 1000.0},
+                    {"sender_uid": "123", "content": "你好", "conversation_id": "c1",
+                     "msg_index": 2, "server_message_id": "102", "timestamp": 1001.0},
+                ]
+
+            def get_messages_batch(self, max_items):
+                result, self.entries = self.entries[:max_items], self.entries[max_items:]
+                return result
+
+            @property
+            def queue_size(self):
+                return len(self.entries)
+
+        adapter = DouyinAdapter("fake-cookie")
+        adapter._client = MagicMock(ws_receiver=FakeWS())
+        adapter._my_uid = "999"
+        adapter._my_name = "Me"
+        adapter._running = True
+        adapter._peer_cache["123"] = ("User", "")
+        adapter._on_message = MagicMock()
+
+        assert asyncio.run(adapter._async_poll()) is True
+        assert adapter._on_message.call_count == 2
+        keys = [call.args[0].message_key for call in adapter._on_message.call_args_list]
+        assert keys == ["douyin:101", "douyin:102"]
+
+    def test_missing_server_id_and_index_does_not_collapse_messages(self):
+        import asyncio
+        from dmshoot.plugins.douyin.adapter import DouyinAdapter
+
+        class FakeWS:
+            def __init__(self):
+                self.entries = [
+                    {"sender_uid": "123", "content": "你好", "conversation_id": "c1",
+                     "msg_index": 0, "server_message_id": "", "timestamp": 1000.0},
+                    {"sender_uid": "123", "content": "你好", "conversation_id": "c1",
+                     "msg_index": 0, "server_message_id": "", "timestamp": 1001.0},
+                ]
+
+            def get_messages_batch(self, max_items):
+                result, self.entries = self.entries[:max_items], self.entries[max_items:]
+                return result
+
+            @property
+            def queue_size(self):
+                return len(self.entries)
+
+        adapter = DouyinAdapter("fake-cookie")
+        adapter._client = MagicMock(ws_receiver=FakeWS())
+        adapter._my_uid = "999"
+        adapter._running = True
+        adapter._peer_cache["123"] = ("User", "")
+        adapter._on_message = MagicMock()
+
+        assert asyncio.run(adapter._async_poll()) is True
+        assert adapter._on_message.call_count == 2
+        assert all(not call.args[0].message_key for call in adapter._on_message.call_args_list)
+
+    def test_stop_interrupts_reconnect_wait(self):
+        import time as _time
+        from dmshoot.utils.douyin_ws import DouyinWSReceiver
+
+        receiver = DouyinWSReceiver(object())
+        with patch("dmshoot.utils.douyin_ws._WrappedWS.start", return_value=None):
+            receiver.start()
+            _time.sleep(0.05)
+            started = _time.perf_counter()
+            receiver.stop()
+            elapsed = _time.perf_counter() - started
+
+        assert elapsed < 1.0
+
+    def test_receiver_clears_connected_when_wrapper_exits_without_close(self):
+        import time as _time
+        from dmshoot.utils.douyin_ws import DouyinWSReceiver, _WrappedWS
+
+        states = []
+        receiver = DouyinWSReceiver(
+            object(), on_state=lambda state, detail: states.append(state)
+        )
+
+        def open_then_return(wrapper):
+            wrapper._on_open_callback()
+
+        with patch.object(_WrappedWS, "start", open_then_return):
+            receiver.start()
+            deadline = _time.time() + 0.5
+            while not ("online" in states and states[-1:] == ["connecting"]) and _time.time() < deadline:
+                _time.sleep(0.01)
+            assert receiver.connected is False
+            assert "online" in states
+            assert states[-1] == "connecting"
+            receiver.stop()
+
 
 # ═══════════════════════════════════════════════════════════
 # 5. B站异步轮询 — asyncio.gather 并发
@@ -307,6 +573,18 @@ class TestMessageHistory:
 @pytest.mark.chat
 class TestAsyncPoll:
     """B站异步轮询测试"""
+
+    def test_message_key_is_scoped_to_conversation(self):
+        from dmshoot.plugins.bilibili.adapter import BilibiliAdapter
+
+        adapter = BilibiliAdapter()
+        adapter._my_uid = 999
+        msg = adapter._parse_message({
+            "sender_uid": 123, "talker_id": 456, "content": "hello",
+            "msg_seqno": 88, "timestamp": 1700000000,
+        })
+
+        assert msg.message_key == "bilibili:456:88"
 
     def test_async_poll_uses_gather(self, mock_bilibili_api):
         """L12: _async_poll → asyncio.gather → 并发拉取"""

@@ -579,21 +579,25 @@ class LoginPage(QWidget):
         self._stop_worker()
         if platform == "douyin":
             if cookies and isinstance(cookies, dict) and cookies.get("cookie"):
-                database.update_config_field("douyin_cookie", cookies["cookie"])
-                database.update_config_field("douyin_web_protect", cookies.get("web_protect", ""))
-                database.update_config_field("douyin_keys", cookies.get("keys", ""))
+                database.update_config_fields({
+                    "douyin_cookie": cookies["cookie"],
+                    "douyin_web_protect": cookies.get("web_protect", ""),
+                    "douyin_keys": cookies.get("keys", ""),
+                })
                 self.dy_status.setText("已保存，自动登录中...")
                 self.connect_platform.emit("douyin")
             else:
                 self.dy_status.setText("未登录，请重试")
         elif platform == "bilibili":
             if cookies and isinstance(cookies, dict) and cookies.get("SESSDATA"):
-                database.update_config_field("bilibili_sessdata", cookies["SESSDATA"])
-                database.update_config_field("bilibili_jct", cookies.get("bili_jct", ""))
-                database.update_config_field("bilibili_buvid3", cookies.get("buvid3", ""))
-                database.update_config_field("bilibili_buvid4", cookies.get("buvid4", ""))
-                database.update_config_field("bilibili_dedeuserid", cookies.get("dedeuserid", ""))
-                database.update_config_field("bilibili_ac_time_value", cookies.get("ac_time_value", ""))
+                database.update_config_fields({
+                    "bilibili_sessdata": cookies["SESSDATA"],
+                    "bilibili_jct": cookies.get("bili_jct", ""),
+                    "bilibili_buvid3": cookies.get("buvid3", ""),
+                    "bilibili_buvid4": cookies.get("buvid4", ""),
+                    "bilibili_dedeuserid": cookies.get("dedeuserid", ""),
+                    "bilibili_ac_time_value": cookies.get("ac_time_value", ""),
+                })
                 self.bili_status.setText("已保存，自动登录中...")
                 self.connect_platform.emit("bilibili")
             else:
@@ -626,38 +630,43 @@ class LoginPage(QWidget):
         扫码前调用此方法，避免旧的过期 cookie / ticket / localStorage
         残留字段参与新登录后的连接判断。
         """
-        cfg = database.load_config()
+        fields = {}
         if platform == "douyin":
-            cfg.douyin_cookie = ""
-            cfg.douyin_web_protect = ""
-            cfg.douyin_keys = ""
+            fields = {
+                "douyin_cookie": "",
+                "douyin_web_protect": "",
+                "douyin_keys": "",
+            }
             if update_ui:
                 self.dy_status.setText("已清理")
                 self.dy_monitor.setVisible(False)
                 self._dy_running = False
         elif platform == "bilibili":
-            cfg.bilibili_sessdata = ""
-            cfg.bilibili_jct = ""
-            cfg.bilibili_buvid3 = ""
-            cfg.bilibili_buvid4 = ""
-            cfg.bilibili_dedeuserid = ""
-            cfg.bilibili_ac_time_value = ""
+            fields = {
+                "bilibili_sessdata": "",
+                "bilibili_jct": "",
+                "bilibili_buvid3": "",
+                "bilibili_buvid4": "",
+                "bilibili_dedeuserid": "",
+                "bilibili_ac_time_value": "",
+            }
             if update_ui:
                 self.bili_status.setText("已清理")
                 self.bili_monitor.setVisible(False)
                 self._bili_running = False
         elif platform == "xiaohongshu":
-            cfg.xhs_cookie = ""
+            fields = {"xhs_cookie": ""}
             if update_ui:
                 self.xhs_status.setText("已清理")
                 self._xhs_running = False
         elif platform == "kuaishou":
-            cfg.ks_cookie = ""
+            fields = {"ks_cookie": ""}
             if update_ui:
                 self.ks_status.setText("已清理")
                 self.ks_monitor.setVisible(False)
                 self._ks_running = False
-        database.save_config(cfg)
+        if fields:
+            database.update_config_fields(fields)
 
     def _clear_cookie(self, platform: str):
         self._clear_saved_auth(platform, update_ui=True)

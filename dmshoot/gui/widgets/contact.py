@@ -366,10 +366,11 @@ class ContactList(QWidget):
         """O(1) 增量更新一个会话的最近消息文字和未读徽标，不查 DB"""
         w = self._widget_map.get(session_id)
         if not w:
-            return
+            return False
         _update_item_text(w, last_message[:30])
         if unread_count >= 0:
             w._update_badge(unread_count)
+        return True
 
     def _on_click(self, item):
         w = self.list.itemWidget(item)

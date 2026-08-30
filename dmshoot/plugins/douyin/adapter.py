@@ -6,8 +6,10 @@
 SDK 依赖已通过 DouyinClient 隔离。
 """
 
-import time, json
+import time
 import asyncio
+import threading
+from collections import deque
 from pathlib import Path
 
 import urllib3
@@ -37,15 +39,20 @@ class DouyinAdapter(BaseAdapter):
         self._my_uid: str = ""
         self._my_name = ""
         self._replied: set[str] = set()
-        self._stop_event = asyncio.Event()
+        self._replied_order: deque[str] = deque()
+        self._stop_event = threading.Event()
         self._conv_to_peer: dict[str, str] = {}
         self._peer_cache: dict[str, tuple[str, str]] = {}
         self._conv_cache: dict[str, tuple] = {}
+        self._pending_peer_uids: set[str] = set()
+        self._peer_refresh_task = None
 
     def stop(self):
         self._running = False
         self._connected = False
         self._stop_event.set()
+        if self._client:
+            self._client.stop_ws_receiver()
         super().stop()
 
     def run(self):
@@ -57,8 +64,11 @@ class DouyinAdapter(BaseAdapter):
             self._set_status(PlatformStatus.ERROR, "连接失败")
             import time; time.sleep(0.1)  # 等信号处理完毕再退出
             return
-        self._connected = True
-        self._set_status(PlatformStatus.ONLINE, f"{self._my_name} · 已连接")
+        ws = self._client.ws_receiver if self._client else None
+        if ws and ws.connected:
+            self._on_ws_state("online", "WS 已连接")
+        else:
+            self._set_status(PlatformStatus.CONNECTING, f"{self._my_name} · 等待 WS 连接")
         try:
             asyncio.run(self._async_loop())
         except asyncio.CancelledError:
@@ -95,7 +105,7 @@ class DouyinAdapter(BaseAdapter):
             self._warm_peer_cache()
 
             # WS 监听（先于历史同步启动）
-            self._client.start_ws_receiver()
+            self._client.start_ws_receiver(on_state=self._on_ws_state)
 
             # 同步历史会话
             logger.info("  → 开始同步数据...")
@@ -112,6 +122,31 @@ class DouyinAdapter(BaseAdapter):
             self._client.stop_ws_receiver()
         self._auth = None
         self._client = None
+
+    def _on_ws_state(self, state: str, message: str):
+        """WS 线程回报真实连接状态，绿灯只由握手成功触发。"""
+        if not self._running:
+            return
+        from dmshoot.core.bus import PlatformStatus
+        if state == "online":
+            self._connected = True
+            suffix = "已连接"
+            if self._client and not self._client.has_ticket:
+                suffix += "（缺少 ticket，无法发送）"
+            self._set_status(PlatformStatus.ONLINE, f"{self._my_name} · {suffix}")
+        else:
+            self._connected = False
+            self._set_status(PlatformStatus.CONNECTING, message or "WS 重连中")
+
+    def _remember_message_key(self, key: str):
+        """保存有限数量的运行时去重键，持久去重由 SQLite 负责。"""
+        if key in self._replied:
+            return
+        if len(self._replied_order) >= 10_000:
+            expired = self._replied_order.popleft()
+            self._replied.discard(expired)
+        self._replied_order.append(key)
+        self._replied.add(key)
 
     def _fetch_my_name(self) -> str:
         try:
@@ -161,8 +196,9 @@ class DouyinAdapter(BaseAdapter):
                 logger.info("暂无历史会话，WS 实时消息将逐步建立联系人列表")
                 return
 
+            session_records = []
             for conv in conversations:
-                database.upsert_session(SessionRecord(
+                session_records.append(SessionRecord(
                     session_id=f"douyin:0:1:{conv['peer_uid']}:{self._my_uid}:0:",
                     platform="douyin",
                     peer_name=conv['nickname'],
@@ -171,6 +207,7 @@ class DouyinAdapter(BaseAdapter):
                     last_time=time.time(),
                     avatar_url=conv.get('avatar', ''),
                 ))
+            database.upsert_sessions_batch(session_records)
 
             # 保存 protobuf 解析出的历史消息（批量写入）
             cached_msgs = self._client.get_cached_messages()
@@ -183,6 +220,15 @@ class DouyinAdapter(BaseAdapter):
                     is_self = msg.get('is_self', False)
                     peer_uid = sender_uid if not is_self else (msg.get('conv_short_id', '') or sender_uid)
                     ts = msg.get('timestamp', time.time())
+                    server_id = msg.get('server_message_id', 0)
+                    msg_index = msg.get('msg_index', 0)
+                    conv_short_id = msg.get('conv_short_id', '')
+                    if server_id:
+                        message_key = f"douyin:{server_id}"
+                    elif conv_short_id and msg_index:
+                        message_key = f"douyin:{conv_short_id}:{msg_index}"
+                    else:
+                        message_key = ""
                     session_id = f"douyin:0:1:{peer_uid}:{self._my_uid}:0:"
                     sender_name = self._my_name if is_self else f"用户{sender_uid}"[:20]
                     if not is_self and sender_uid in self._peer_cache:
@@ -191,9 +237,14 @@ class DouyinAdapter(BaseAdapter):
                         session_id=session_id, sender_name=sender_name,
                         sender_id=sender_uid, content=content,
                         msg_type="text", timestamp=ts, is_self=is_self,
+                        message_key=message_key,
                     ))
                 saved_count = database.save_messages_batch(batch)
                 logger.success(f"  ✓ 同步完成: {len(conversations)}会话 + {saved_count}条历史消息")
+                logger.debug_category(
+                    "message_sync",
+                    f"抖音历史同步: 会话={len(conversations)} 解析={len(batch)} 新增={saved_count}",
+                )
             else:
                 logger.success(f"  ✓ 同步完成: {len(conversations)}会话（无历史消息）")
         except Exception as e:
@@ -220,30 +271,27 @@ class DouyinAdapter(BaseAdapter):
 
     async def _async_poll(self):
         if self._stop_event.is_set():
-            return
+            return False
         ws = self._client.ws_receiver
         if ws is None:
-            logger.warning("抖音 WS 接收器未就绪，等待重连...")
-            await asyncio.sleep(5)
-            return
+            return False
 
-        entries = ws.get_all_messages()
+        entries = ws.get_messages_batch(100)
         if not entries:
-            await asyncio.sleep(0.5)
-            return
+            return False
 
         qsize = ws.queue_size
-        from dmshoot.utils.console_log import is_log_enabled
-        if is_log_enabled("polling"):
-            logger.debug(f"WS轮询: 待处理{qsize} | 已回复{len(self._replied)} | 缓存{len(self._peer_cache)}")
+        logger.debug_category(
+            "polling",
+            f"WS队列: 待处理{qsize} | 已去重{len(self._replied)} | 用户缓存{len(self._peer_cache)}",
+        )
 
         from dmshoot.storage import database
-        from dmshoot.storage.models import SessionRecord, ChatMessage
+        from dmshoot.storage.models import ChatMessage
 
         written = 0
         skipped_dup = 0
-        batch_msgs: list[ChatMessage] = []
-        batch_sessions: dict[str, SessionRecord] = {}  # session_id → record，去重
+        self_messages: list[ChatMessage] = []
         unknown_senders: set[str] = set()  # 新发送者，需要拉取昵称+头像
         for entry in entries:
             try:
@@ -253,10 +301,16 @@ class DouyinAdapter(BaseAdapter):
                 ts = entry.get("timestamp", time.time())
                 is_self = sender_uid == self._my_uid
                 msg_index = entry.get("msg_index", 0)
+                server_message_id = entry.get("server_message_id", "")
 
-                # ── 去重: conversation_id + msg_index 全局唯一 ──
-                dedup_key = f"{conv_id}:{msg_index}"
-                if dedup_key in self._replied:
+                # 服务端 ID 优先；序号缺失时交给 DB 的精确时间戳规则兜底。
+                if server_message_id:
+                    dedup_key = f"douyin:{server_message_id}"
+                elif msg_index:
+                    dedup_key = f"douyin:{conv_id}:{msg_index}"
+                else:
+                    dedup_key = ""
+                if dedup_key and dedup_key in self._replied:
                     skipped_dup += 1
                     continue
 
@@ -279,84 +333,82 @@ class DouyinAdapter(BaseAdapter):
                     cached = self._peer_cache.get(sender_uid)
                     sender_name = cached[0] if cached else f"用户{sender_uid}"
 
-                # 对方的消息：收集到批量写入
                 if not is_self:
                     was_cached = sender_uid in self._peer_cache
                     avatar = (self._peer_cache.get(sender_uid) or ("", ""))[1]
-                    batch_sessions[session_id] = SessionRecord(
-                        session_id=session_id, platform="douyin",
-                        peer_name=sender_name, peer_id=sender_uid,
-                        last_message=content[:100], last_time=ts,
-                        avatar_url=avatar,
-                    )
                     self._peer_cache[sender_uid] = (sender_name, avatar)
                     # 新发送者：标记需要从 API 拉取实际昵称+头像
                     if not was_cached:
                         unknown_senders.add(sender_uid)
 
-                batch_msgs.append(ChatMessage(
-                    session_id=session_id, sender_name=sender_name,
-                    sender_id=sender_uid, content=content,
-                    msg_type="text", timestamp=ts, is_self=is_self,
-                ))
                 written += 1
 
                 if is_self:
                     logger.info(f"[我→{sender_name}] {content[:50]}")
                 else:
-                    from dmshoot.utils.console_log import raw_sep
-                    raw_sep()
                     logger.recv("抖音", sender_name, content[:200])
 
-                # 自己的消息不触发 _on_message（避免和 AI 回复流程产生重复气泡）
-                # DB 层仍通过 batch write 正常持久化
-                if not is_self:
+                # 入站消息交给统一 GUI 事务保存；自己的消息只在适配器批量持久化。
+                if is_self:
+                    self_messages.append(ChatMessage(
+                        session_id=session_id, sender_name=sender_name,
+                        sender_id=sender_uid, content=content,
+                        msg_type="text", timestamp=ts, is_self=True,
+                        message_key=dedup_key,
+                    ))
+                else:
                     self._on_message(Message(
                         platform="douyin", msg_type="text",
                         sender_id=sender_uid, sender_name=sender_name,
                         session_id=session_id, content=content,
                         timestamp=ts, is_self=False,
+                        seq_id=int(server_message_id or msg_index or 0),
+                        message_key=dedup_key,
                     ))
-                self._replied.add(dedup_key)
+                if dedup_key:
+                    self._remember_message_key(dedup_key)
 
             except Exception as e:
                 logger.debug(f"抖音消息处理异常: {e}")
 
-        # 批量写入（1 次事务 vs N 次）
-        if batch_msgs:
-            database.save_messages_batch(batch_msgs)
-        for rec in batch_sessions.values():
-            database.upsert_session(rec)
+        if self_messages:
+            database.save_messages_batch(self_messages)
         if written or skipped_dup:
-            from dmshoot.utils.console_log import is_log_enabled
-            if is_log_enabled("ws_batch"):
-                logger.debug(f"WS批处理: {written}写入 + {skipped_dup}去重")
+            logger.debug_category("ws_batch", f"WS批处理: {written}接收 + {skipped_dup}去重")
         # 新发送者：从 API 拉取昵称+头像，更新会话表
         if unknown_senders:
-            await self._refresh_peer_info(unknown_senders)
-        # 有消息时不 delay，紧接下一轮 drain 队列
+            self._queue_peer_refresh(unknown_senders)
+        return True
+
+    def _queue_peer_refresh(self, uids: set[str]):
+        self._pending_peer_uids.update(uids)
+        if self._peer_refresh_task is None or self._peer_refresh_task.done():
+            self._peer_refresh_task = asyncio.create_task(self._peer_refresh_loop())
+
+    async def _peer_refresh_loop(self):
+        """用户资料补全独立运行，不阻塞 WS 消息队列。"""
+        while self._pending_peer_uids and self._running and not self._stop_event.is_set():
+            now = time.monotonic()
+            last = getattr(self, "_last_peer_refresh", 0.0)
+            wait = max(0.0, 10.0 - (now - last))
+            if wait:
+                await asyncio.sleep(wait)
+            uids = set(self._pending_peer_uids)
+            self._pending_peer_uids.clear()
+            self._last_peer_refresh = time.monotonic()
+            await self._refresh_peer_info(uids)
 
     async def _refresh_peer_info(self, unknown_uids: set[str]):
         """异步拉取用户昵称+头像（httpx.AsyncClient 复用连接池）"""
-        import time as _time
-        import httpx
-
-        now = _time.time()
-        last = getattr(self, '_last_peer_refresh', 0)
-        if now - last < 10:
-            return
-        self._last_peer_refresh = now
-
         from dmshoot.storage import database
         headers = {
             "Cookie": self._cookie_str,
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Referer": "https://www.douyin.com/",
         }
-        updated = 0
-        for uid in unknown_uids:
+        async def fetch_one(uid: str):
             if self._stop_event.is_set():
-                return
+                return False
             try:
                 url = (
                     "https://www.douyin.com/aweme/v1/web/user/profile/other/"
@@ -365,7 +417,7 @@ class DouyinAdapter(BaseAdapter):
                 )
                 resp = await self._http.get(url, headers=headers)
                 if resp.status_code != 200:
-                    continue
+                    return False
                 data = resp.json()
                 user = data.get("user", {})
                 nick = user.get("nickname", "")
@@ -376,27 +428,66 @@ class DouyinAdapter(BaseAdapter):
                     self._peer_cache[uid] = (nick, avatar)
                     sid = f"douyin:0:1:{uid}:{self._my_uid}:0:"
                     database.update_session_name_avatar(sid, nick, avatar)
-                    updated += 1
+                    self.bus.notify_session_updated(sid)
                     logger.info(f"抖音用户信息: {uid} → {nick}")
+                    return True
             except Exception as e:
                 logger.debug(f"抖音查用户 {uid} 失败: {e}")
+            return False
+
+        semaphore = asyncio.Semaphore(4)
+
+        async def limited(uid: str):
+            async with semaphore:
+                return await fetch_one(uid)
+
+        results = await asyncio.gather(
+            *(limited(uid) for uid in unknown_uids),
+            return_exceptions=True,
+        )
+        updated = sum(result is True for result in results)
         if updated:
             logger.info(f"抖音: 已更新 {updated} 个用户信息")
 
     async def _async_loop(self):
-        """asyncio 主循环 — 退避重连"""
+        """事件驱动消息循环；队列到达即唤醒，不再固定 500ms 轮询。"""
         import httpx
         backoff = ReconnectBackoff(min_s=1.0, max_s=30.0)
+        loop = asyncio.get_running_loop()
+        wakeup = asyncio.Event()
+        ws = self._client.ws_receiver
+
+        def notify():
+            try:
+                loop.call_soon_threadsafe(wakeup.set)
+            except RuntimeError:
+                pass
+
+        if ws:
+            ws.set_wakeup_callback(notify)
         async with httpx.AsyncClient(timeout=5, verify=False) as self._http:
-            while self._running and not self._stop_event.is_set():
-                try:
-                    await self._async_poll()
-                    backoff.reset()  # 成功则重置
-                except Exception as e:
-                    err_str = str(e)
-                    if any(kw in err_str for kw in ["过期", "未登录", "invalid", "expired", "token"]):
-                        self.on_error(ErrorCategory.AUTH, f"Cookie 已过期: {e}", e)
-                        break  # 退出循环，停止无效重试
-                    wait = backoff.fail()
-                    self.on_error(ErrorCategory.NETWORK, f"轮询失败(重试间隔{wait:.0f}s): {e}", e)
-                    await asyncio.sleep(wait)
+            try:
+                while self._running and not self._stop_event.is_set():
+                    try:
+                        wakeup.clear()
+                        processed = await self._async_poll()
+                        backoff.reset()
+                        if processed or (ws and ws.queue_size):
+                            continue
+                        try:
+                            await asyncio.wait_for(wakeup.wait(), timeout=5.0)
+                        except asyncio.TimeoutError:
+                            pass
+                    except Exception as e:
+                        err_str = str(e)
+                        if any(kw in err_str for kw in ["过期", "未登录", "invalid", "expired", "token"]):
+                            self.on_error(ErrorCategory.AUTH, f"Cookie 已过期: {e}", e)
+                            break
+                        wait = backoff.fail()
+                        self.on_error(ErrorCategory.NETWORK, f"消息处理失败(重试间隔{wait:.0f}s): {e}", e)
+                        await asyncio.sleep(wait)
+            finally:
+                if ws:
+                    ws.set_wakeup_callback(None)
+                if self._peer_refresh_task and not self._peer_refresh_task.done():
+                    self._peer_refresh_task.cancel()

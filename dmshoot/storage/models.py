@@ -41,6 +41,7 @@ class ChatMessage:
     is_auto: bool = False      # AI自动回复
     persona: str = ""          # 发送 AI 回复时所用的提示词角色名（如「柁炑」）
     timestamp: float = field(default_factory=lambda: datetime.now().timestamp())
+    message_key: str = ""      # 平台服务端消息唯一标识，用于可靠去重
 
 
 @dataclass(slots=True)
@@ -85,9 +86,12 @@ class AppConfig:
     reply_delay_min: float = 1.0   # 最小延迟(秒)
     reply_delay_max: float = 3.0   # 最大延迟(秒)
     max_context_rounds: int = 10    # AI上下文轮数
+    rate_douyin: int = 5
+    rate_bilibili: int = 10
+    rate_kuaishou: int = 5
 
     # 界面
     wallpaper_path: str = ""  # 当前活跃壁纸路径（空=默认）
     wallpaper_gallery: list[str] = field(default_factory=list)  # 已添加的自定义壁纸集合
     debug_log_levels: str = ""  # 调试日志开关 JSON: {"heartbeat": true, "polling": false, ...}
-    msg_backend: str = "python"  # 消息处理后端: python / go
+    perf_monitor_enabled: bool = True

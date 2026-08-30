@@ -110,9 +110,15 @@ class HomePage(QWidget):
         self._msg_cache[session_id] = msgs
         self.chat.load_messages(peer_name, msgs)
 
+    def refresh_session(self, session_id: str):
+        """新联系人或资料补全后，按现有节流策略刷新当前平台。"""
+        if session_id.startswith(f"{self._current_platform}:"):
+            self._load_contacts()
+
     def add_message(self, session_id: str, sender_name: str, content: str,
                      is_auto: bool = False, timestamp: float = None, persona: str = "",
-                     unread_count: int = -1, send_ok: bool = True):
+                     unread_count: int = -1, send_ok: bool = True,
+                     sender_id: str = "", message_key: str = "", is_self: bool = False):
         """添加新消息到缓存和界面。缓存按时间排序，保证上旧下新顺序。"""
         from dmshoot.storage.models import ChatMessage
         import time as _time
@@ -121,25 +127,37 @@ class HomePage(QWidget):
         msg = ChatMessage(
             session_id=session_id,
             sender_name=sender_name,
+            sender_id=sender_id,
             content=content,
+            is_self=is_self,
             is_auto=is_auto,
             persona=persona,
             timestamp=ts,
+            message_key=message_key,
         )
         # 维护缓存（按时间排序，保证 oldest first）
         cache = self._msg_cache.get(session_id, [])
-        # 去重：相同内容（忽略发送者名和 is_auto，彻底阻断来自不同路径的重复推送）
-        dup = any(
-            m.content == content
-            for m in cache[-15:]
-        )
+        # 服务端 ID 精确去重；无 ID 时只过滤同一时刻的同一条事件。
+        if message_key:
+            dup = any(m.message_key == message_key for m in cache[-50:])
+        else:
+            dup = any(
+                m.sender_id == sender_id and m.content == content and
+                m.is_self == is_self and m.is_auto == is_auto and
+                abs(m.timestamp - ts) < 0.001
+                for m in cache[-15:]
+            )
         if dup:
             return
-        cache.append(msg)
-        cache.sort(key=lambda m: m.timestamp)
+        if cache and cache[-1].timestamp > ts:
+            cache.append(msg)
+            cache.sort(key=lambda m: m.timestamp)
+        else:
+            cache.append(msg)
         self._msg_cache[session_id] = cache
         # 推气泡（如果在看这个会话）
         if self._current_session == session_id:
             self.chat.append_message(msg)
         # 增量更新通讯录（不查 DB，只更新文字）
-        self.contacts.update_one_session(session_id, content, ts, unread_count)
+        if not self.contacts.update_one_session(session_id, content, ts, unread_count):
+            self.refresh_session(session_id)

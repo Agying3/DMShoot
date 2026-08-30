@@ -12,10 +12,25 @@ def _read_varint(data, offset):
         shift += 7
     return result, offset
 
+
+def _message_identity(message: dict) -> tuple:
+    """Return a stable identity without using locally generated fallback time."""
+    server_id = message.get('server_message_id', 0)
+    if server_id:
+        return ("server", str(server_id))
+    return (
+        "fallback",
+        str(message.get('sender_uid', '')),
+        str(message.get('conv_short_id', '')),
+        str(message.get('msg_index', 0)),
+        message.get('content', ''),
+    )
+
 def extract_messages_from_protobuf(raw: bytes, my_uid: str = "") -> list[dict]:
     """从 im_init protobuf 提取消息列表"""
     messages = []
     i = 0
+    metadata_floor = 0
     
     while i < len(raw) - 8:
         # 找 field 8 tag (0x42 = (8<<3)|2)
@@ -39,6 +54,10 @@ def extract_messages_from_protobuf(raw: bytes, my_uid: str = "") -> list[dict]:
         
         if not (content_str.startswith('{') and ('text' in content_str or 'tips' in content_str)):
             i = j + content_len; continue
+
+        content_end = j + content_len
+        metadata_start = metadata_floor
+        metadata_floor = content_end
         
         # ── 就近扫描 sender (field 7 = 0x38) ──
         # field 7 通常就在 content 前面 10~200 字节内
@@ -50,7 +69,7 @@ def extract_messages_from_protobuf(raw: bytes, my_uid: str = "") -> list[dict]:
         conv_short_id = None
         
         # 扫描 i 前面 300 字节，识别关键字段
-        scan = max(0, i - 300)
+        scan = max(metadata_start, i - 300)
         potential_sender = None  # 找到的最可能的 sender
         
         while scan < i:
@@ -64,11 +83,11 @@ def extract_messages_from_protobuf(raw: bytes, my_uid: str = "") -> list[dict]:
                         if v >= 1_000_000_000:
                             potential_sender = v
                     elif b == 0x18:  # field 3 = server_message_id
-                        if not server_msg_id: server_msg_id = v
+                        server_msg_id = v
                     elif b == 0x20:  # field 4 = index
-                        if not msg_index: msg_index = v
+                        msg_index = v
                     elif b == 0x28:  # field 5 = conversation_short_id
-                        if not conv_short_id: conv_short_id = v
+                        conv_short_id = v
                     scan = next_pos
                     continue
                 except:
@@ -80,7 +99,7 @@ def extract_messages_from_protobuf(raw: bytes, my_uid: str = "") -> list[dict]:
             sender_uid = potential_sender
         # 如果没找到长 UID，尝试放宽条件（回退到所有 field 7 候选中最长的）
         elif not sender_uid:
-            scan = max(0, i - 300)
+            scan = max(metadata_start, i - 300)
             best_v = 0
             while scan < i:
                 if raw[scan] == 0x38:
@@ -126,7 +145,7 @@ def extract_messages_from_protobuf(raw: bytes, my_uid: str = "") -> list[dict]:
     seen = set()
     unique = []
     for m in messages:
-        key = (m['sender_uid'], m['content'][:60])
+        key = _message_identity(m)
         if key not in seen:
             seen.add(key)
             unique.append(m)

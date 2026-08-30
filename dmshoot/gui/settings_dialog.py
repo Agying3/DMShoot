@@ -4,15 +4,14 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
-    QLabel, QLineEdit, QCheckBox, QComboBox, QPushButton,
-    QGroupBox, QFormLayout, QSpinBox, QScrollArea, QGraphicsOpacityEffect, QFrame
+    QLabel, QCheckBox, QComboBox, QPushButton, QDoubleSpinBox,
+    QGroupBox, QFormLayout, QSpinBox, QScrollArea, QFrame
 )
-from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve
+from PySide6.QtCore import Qt, Signal
 
 from dmshoot.storage.models import AppConfig
-from dmshoot.ai.prompts import PROMPTS
 from dmshoot.storage import database
-from dmshoot.ai.backend import init_ai, get_ai
+from dmshoot.gui.widgets.toast import show_toast
 
 
 class GlassPopup(QDialog):
@@ -91,13 +90,14 @@ def show_glass_popup(parent, title, text, icon="info"):
 class SettingsDialog(QDialog):
     """全局设置对话框"""
     cache_cleared = Signal(str)  # platform name
-    go_send_command = Signal(dict)  # Go WS 收到 send_command 时发射
+    cache_clear_finished = Signal(bool, str)
 
     def __init__(self, config: AppConfig, parent=None):
         super().__init__(parent)
-        self.config = config
-        self._orig_ai = (config.api_key, config.model, config.system_prompt, config.prompt_preset)
-        self._orig_config = database.load_config()  # 取消时回退
+        # 设置页使用独立草稿；保存时只合并本页拥有的字段，不能覆盖扫码等并发更新。
+        self.config = database.load_config()
+        self._cache_clear_button = None
+        self.cache_clear_finished.connect(self._on_cache_clear_finished)
         self.setWindowTitle("DMShoot 设置")
         self.setMinimumSize(550, 620)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
@@ -174,12 +174,10 @@ class SettingsDialog(QDialog):
 
         # 标签页
         tabs = QTabWidget()
-        # _create_ai_tab/_create_platform_tab 仍执行以绑定变量供 save 使用，但不显示
-        self._ai_tab = self._create_ai_tab()
-        self._platform_tab = self._create_platform_tab()
         tabs.addTab(self._create_reply_tab(), "回复")
         self._theme_placeholder = QWidget()
         tabs.addTab(self._theme_placeholder, "主题")
+        tabs.addTab(self._create_data_tab(), "数据")
         self._perf_placeholder = QWidget()
         tabs.addTab(self._perf_placeholder, "性能")
         tabs.addTab(self._create_debug_tab(), "调试")
@@ -211,116 +209,6 @@ class SettingsDialog(QDialog):
     def _title_mouse_release(self, e):
         self._drag_pos = None
 
-    def _create_ai_tab(self) -> QWidget:
-        w = QWidget()
-        layout = QVBoxLayout()
-
-        # API配置
-        api_group = QGroupBox("DeepSeek API 配置")
-        form = QFormLayout()
-
-        self.api_key_input = QLineEdit(self.config.api_key)
-        self.api_key_input.setEchoMode(QLineEdit.Password)
-        self.api_key_input.setPlaceholderText("sk-...")
-        form.addRow("API Key:", self.api_key_input)
-
-        self.base_url_input = QLineEdit(self.config.base_url)
-        form.addRow("Base URL:", self.base_url_input)
-
-        self.model_input = QLineEdit(self.config.model)
-        form.addRow("Model:", self.model_input)
-
-        api_group.setLayout(form)
-        layout.addWidget(api_group)
-
-        # 提示词
-        prompt_group = QGroupBox("人格预设")
-        prompt_layout = QVBoxLayout()
-
-        self.prompt_combo = QComboBox()
-        self.prompt_combo.addItems(list(PROMPTS.keys()))
-        idx = self.prompt_combo.findText(self.config.prompt_preset)
-        if idx >= 0:
-            self.prompt_combo.setCurrentIndex(idx)
-        self.prompt_combo.currentTextChanged.connect(self._on_prompt_changed)
-
-        prompt_layout.addWidget(QLabel("预设角色:"))
-        prompt_layout.addWidget(self.prompt_combo)
-
-        self.prompt_edit = QLineEdit(self.config.system_prompt)
-        self.prompt_edit.setPlaceholderText("自定义系统提示词...")
-        prompt_layout.addWidget(QLabel("自定义提示词:"))
-        prompt_layout.addWidget(self.prompt_edit)
-
-        prompt_group.setLayout(prompt_layout)
-        layout.addWidget(prompt_group)
-        layout.addStretch()
-
-        w.setLayout(layout)
-        return w
-
-    def _on_prompt_changed(self, name: str):
-        if name in PROMPTS:
-            self.prompt_edit.setText(PROMPTS[name])
-
-    def _create_platform_tab(self) -> QWidget:
-        w = QWidget()
-        layout = QVBoxLayout()
-
-        # 抖音
-        dy_group = QGroupBox("抖音")
-        dy_form = QFormLayout()
-        self.dy_enabled = QCheckBox("启用抖音")
-        self.dy_enabled.setChecked(self.config.douyin_enabled)
-        dy_form.addRow(self.dy_enabled)
-
-        self.dy_cookie = QLineEdit(self.config.douyin_cookie)
-        self.dy_cookie.setPlaceholderText("抖音Cookie...")
-        dy_form.addRow("Cookie:", self.dy_cookie)
-
-        clear_cache_btn = QPushButton("清除聊天记录缓存")
-        clear_cache_btn.setToolTip("删除缓存文件+DB消息记录，不碰登录Cookie。重新连接后自动重拉。")
-        clear_cache_btn.setObjectName("dangerBtn")
-        clear_cache_btn.clicked.connect(self._on_clear_douyin_cache)
-        dy_form.addRow(clear_cache_btn)
-
-        dy_group.setLayout(dy_form)
-        layout.addWidget(dy_group)
-
-        # B站
-        bili_group = QGroupBox("B站")
-        bili_form = QFormLayout()
-        self.bili_enabled = QCheckBox("启用B站")
-        self.bili_enabled.setChecked(self.config.bilibili_enabled)
-        bili_form.addRow(self.bili_enabled)
-
-        self.bili_sessdata = QLineEdit(self.config.bilibili_sessdata)
-        self.bili_sessdata.setPlaceholderText("SESSDATA...")
-        bili_form.addRow("SESSDATA:", self.bili_sessdata)
-
-        self.bili_jct = QLineEdit(self.config.bilibili_jct)
-        self.bili_jct.setPlaceholderText("bili_jct...")
-        bili_form.addRow("bili_jct:", self.bili_jct)
-        bili_group.setLayout(bili_form)
-        layout.addWidget(bili_group)
-
-        # 小红书 — 已废弃
-        # xhs_group = QGroupBox("小红书")
-        # xhs_form = QFormLayout()
-        # self.xhs_enabled = QCheckBox("启用小红书")
-        # self.xhs_enabled.setChecked(self.config.xhs_enabled)
-        # xhs_form.addRow(self.xhs_enabled)
-        # self.xhs_cookie = QLineEdit(self.config.xhs_cookie)
-        # self.xhs_cookie.setPlaceholderText("Cookie...")
-        # xhs_form.addRow("Cookie:", self.xhs_cookie)
-        # xhs_group.setLayout(xhs_form)
-        # layout.addWidget(xhs_group)
-
-        layout.addStretch()
-
-        w.setLayout(layout)
-        return w
-
     def _create_reply_tab(self) -> QWidget:
         w = QWidget()
         layout = QVBoxLayout()
@@ -332,17 +220,22 @@ class SettingsDialog(QDialog):
         self.auto_reply_enabled.setChecked(self.config.auto_reply_enabled)
         form.addRow(self.auto_reply_enabled)
 
-        self.delay_min = QSpinBox()
-        self.delay_min.setRange(0, 30)
-        self.delay_min.setValue(int(self.config.reply_delay_min))
+        self.delay_min = QDoubleSpinBox()
+        self.delay_min.setRange(0, 60)
+        self.delay_min.setDecimals(1)
+        self.delay_min.setSingleStep(0.5)
+        self.delay_min.setValue(self.config.reply_delay_min)
         self.delay_min.setSuffix(" 秒")
         form.addRow("最小延迟:", self.delay_min)
 
-        self.delay_max = QSpinBox()
-        self.delay_max.setRange(0, 60)
-        self.delay_max.setValue(int(self.config.reply_delay_max))
+        self.delay_max = QDoubleSpinBox()
+        self.delay_max.setRange(self.delay_min.value(), 120)
+        self.delay_max.setDecimals(1)
+        self.delay_max.setSingleStep(0.5)
+        self.delay_max.setValue(max(self.config.reply_delay_min, self.config.reply_delay_max))
         self.delay_max.setSuffix(" 秒")
         form.addRow("最大延迟:", self.delay_max)
+        self.delay_min.valueChanged.connect(self.delay_max.setMinimum)
 
         self.context_rounds = QSpinBox()
         self.context_rounds.setRange(1, 50)
@@ -359,12 +252,12 @@ class SettingsDialog(QDialog):
         rate_form.setSpacing(6)
 
         self.rate_douyin = QSpinBox()
-        self.rate_douyin.setRange(1, 50); self.rate_douyin.setValue(5)
+        self.rate_douyin.setRange(1, 60); self.rate_douyin.setValue(self.config.rate_douyin)
         self.rate_douyin.setSuffix(" 条/秒")
         rate_form.addRow("抖音:", self.rate_douyin)
 
         self.rate_bilibili = QSpinBox()
-        self.rate_bilibili.setRange(1, 50); self.rate_bilibili.setValue(10)
+        self.rate_bilibili.setRange(1, 60); self.rate_bilibili.setValue(self.config.rate_bilibili)
         self.rate_bilibili.setSuffix(" 条/秒")
         rate_form.addRow("B站:", self.rate_bilibili)
 
@@ -374,7 +267,7 @@ class SettingsDialog(QDialog):
         # rate_form.addRow("小红书:", self.rate_xhs)
 
         self.rate_ks = QSpinBox()
-        self.rate_ks.setRange(1, 50); self.rate_ks.setValue(5)
+        self.rate_ks.setRange(1, 60); self.rate_ks.setValue(self.config.rate_kuaishou)
         self.rate_ks.setSuffix(" 条/秒")
         rate_form.addRow("快手:", self.rate_ks)
 
@@ -384,6 +277,20 @@ class SettingsDialog(QDialog):
         layout.addStretch()
 
         w.setLayout(layout)
+        return w
+
+    def _create_data_tab(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        cache_group = QGroupBox("聊天缓存")
+        cache_layout = QFormLayout(cache_group)
+        clear_btn = QPushButton("清除抖音聊天缓存")
+        clear_btn.setToolTip("删除缓存文件和抖音消息记录，不清理登录信息")
+        clear_btn.setObjectName("dangerBtn")
+        clear_btn.clicked.connect(self._on_clear_douyin_cache)
+        cache_layout.addRow("抖音:", clear_btn)
+        layout.addWidget(cache_group)
+        layout.addStretch()
         return w
 
     def _create_theme_tab(self) -> QWidget:
@@ -496,11 +403,10 @@ class SettingsDialog(QDialog):
         # 按钮行：开关 + 弹出窗口
         toggle_layout = QHBoxLayout()
         self._perf_toggle = QCheckBox("启用性能监控")
-        self._perf_toggle.setChecked(True)
+        self._perf_toggle.setChecked(self.config.perf_monitor_enabled)
         self._perf_toggle.setStyleSheet(
             "color: rgba(255,255,255,0.6); font-size: 12px;"
         )
-        self._perf_toggle.toggled.connect(lambda v: get_monitor().set_enabled(v))
         toggle_layout.addWidget(self._perf_toggle)
         toggle_layout.addStretch()
 
@@ -516,44 +422,6 @@ class SettingsDialog(QDialog):
         pop_btn.clicked.connect(lambda: PerfWindow.open(parent=self))
         toggle_layout.addWidget(pop_btn)
         layout.addLayout(toggle_layout)
-
-        # ── 后端切换（Python ↔ Go）──
-        backend_group = QGroupBox("消息处理后端")
-        backend_layout = QHBoxLayout()
-
-        self._backend_combo = QComboBox()
-        self._backend_combo.addItem("🐍 Python (默认)", "python")
-        self._backend_combo.addItem("🐀 Go (高性能)", "go")
-        self._backend_combo.setCurrentIndex(0 if self.config.msg_backend != "go" else 1)
-        self._backend_combo.setStyleSheet(
-            "QComboBox { background: #313244; color: #cdd6f4; border: 1px solid #45475a;"
-            "border-radius: 4px; padding: 2px 8px; font-size: 12px; }"
-            "QComboBox::drop-down { border: none; }"
-            "QComboBox QAbstractItemView { background: #313244; color: #cdd6f4; }"
-        )
-        backend_layout.addWidget(self._backend_combo)
-
-        self._backend_status = QLabel()
-        try:
-            self._update_backend_status()
-        except Exception as e:
-            self._backend_status.setText(f"✕ {e}")
-        self._backend_status.setStyleSheet("color: #6c7086; font-size: 11px;")
-        backend_layout.addWidget(self._backend_status)
-
-        self._backend_switch_btn = QPushButton("切换")
-        self._backend_switch_btn.setFixedWidth(60)
-        self._backend_switch_btn.setStyleSheet(
-            "QPushButton { background: rgba(166,227,161,0.15); color: #a6e3a1;"
-            "border: 1px solid rgba(166,227,161,0.25); border-radius: 6px;"
-            "padding: 4px 12px; font-size: 12px; }"
-            "QPushButton:hover { background: rgba(166,227,161,0.25); }"
-        )
-        self._backend_switch_btn.clicked.connect(self._on_switch_backend)
-        backend_layout.addWidget(self._backend_switch_btn)
-
-        backend_group.setLayout(backend_layout)
-        layout.addWidget(backend_group)
 
         # 包裹在可滚动区域
         scroll = QScrollArea()
@@ -592,77 +460,6 @@ class SettingsDialog(QDialog):
             tabs.insertTab(index, fallback, "性能")
             tabs.setCurrentIndex(index)
 
-    def _update_backend_status(self):
-        import os
-        from dmshoot.core.go_bridge import get_go_bridge
-        bridge = get_go_bridge()
-
-        if bridge._proc and bridge._proc.poll() is None:
-            # Go 已启动运行中
-            self._backend_status.setText("● Go 运行中")
-            self._backend_status.setStyleSheet("color: #89b4fa; font-size: 11px;")
-            return
-        if self.config.msg_backend == "go":
-            go_bin = str(Path(__file__).parent.parent.parent / "dmshoot-go" / "msg-service.exe")
-            if os.path.exists(go_bin):
-                # 配置选 Go、二进制存在、但未启动 → 自动启动
-                self._backend_status.setText("⚡ Go 启动中...")
-                self._backend_status.setStyleSheet("color: #f9e2af; font-size: 11px;")
-                try:
-                    from dmshoot.core.go_bridge import get_go_bridge
-                    b = get_go_bridge()
-                    if b.start():
-                        b.start_ws_sync(on_send_command=lambda data: self.go_send_command.emit(data))
-                        self._backend_status.setText("● Go 运行中")
-                        self._backend_status.setStyleSheet("color: #89b4fa; font-size: 11px;")
-                    else:
-                        self._backend_status.setText("✕ Go 启动失败，回退 Python")
-                        self._backend_status.setStyleSheet("color: #f38ba8; font-size: 11px;")
-                except Exception as e:
-                    self._backend_status.setText(f"✕ Go 异常: {e}")
-                    self._backend_status.setStyleSheet("color: #f38ba8; font-size: 11px;")
-            else:
-                self._backend_status.setText("⚠ Go 未编译 (运行 go build)")
-                self._backend_status.setStyleSheet("color: #f9e2af; font-size: 11px;")
-        else:
-            self._backend_status.setText("🐍 Python 运行中")
-            self._backend_status.setStyleSheet("color: #a6e3a1; font-size: 11px;")
-
-    def _on_switch_backend(self):
-        target = self._backend_combo.currentData()
-        import os
-        go_bin = str(Path(__file__).parent.parent.parent / "dmshoot-go" / "msg-service.exe")
-        if target == "go" and not os.path.exists(go_bin):
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Go 未编译",
-                "请先编译 Go 服务:\n"
-                "  cd dmshoot-go\n"
-                "  go build -o msg-service.exe .")
-            self._backend_combo.setCurrentIndex(0)
-            return
-        try:
-            from dmshoot.core.go_bridge import get_go_bridge
-            bridge = get_go_bridge()
-            if target == "go":
-                if bridge._proc and bridge._proc.poll() is None:
-                    return  # 已运行
-                ok = bridge.start()
-                if ok:
-                    self._backend_status.setText("● Go 运行中")
-                    self._backend_status.setStyleSheet("color: #89b4fa; font-size: 11px;")
-                    bridge.start_ws_sync(on_send_command=lambda data: self.go_send_command.emit(data))
-                else:
-                    self._backend_status.setText("✕ Go 启动失败")
-                    self._backend_status.setStyleSheet("color: #f38ba8; font-size: 11px;")
-                    self._backend_combo.setCurrentIndex(0)
-            else:
-                bridge.stop()
-                self._backend_status.setText("🐍 Python 运行中")
-                self._backend_status.setStyleSheet("color: #a6e3a1; font-size: 11px;")
-        except Exception as e:
-            self._backend_status.setText(f"✕ {e}")
-            self._backend_status.setStyleSheet("color: #f38ba8; font-size: 11px;")
-
     def tick_perf(self):
         """每秒 tick — 从主窗口定时器调用"""
         if hasattr(self, '_perf_chart') and self._perf_chart:
@@ -672,13 +469,13 @@ class SettingsDialog(QDialog):
                 pass
 
     def _create_debug_tab(self) -> QWidget:
-        """调试标签页 — 终端日志类别开关（热修改，即时生效）"""
-        from dmshoot.utils.console_log import is_log_enabled, set_log_level
+        """调试标签页 — 保存后统一应用，取消不会留下运行时副作用。"""
+        from dmshoot.utils.console_log import is_log_enabled
         import json as _json
         w = QWidget()
         layout = QVBoxLayout()
 
-        hint = QLabel("勾选后该类日志即时显示在终端，关闭则立即隐藏。")
+        hint = QLabel("勾选后在终端显示对应调试信息。")
         hint.setStyleSheet("color: rgba(255,255,255,0.4); font-size: 11px; padding-bottom: 4px;")
         hint.setWordWrap(True)
         layout.addWidget(hint)
@@ -692,8 +489,13 @@ class SettingsDialog(QDialog):
                 pass
 
         categories = [
-            ("heartbeat", "适配器心跳"),("polling", "WS轮询刷量"),
-            ("ws_batch", "WS批处理统计"),("debug", "调试日志 (cookie_reader等)"),
+            ("ai_thinking", "AI 思考过程"),
+            ("message_sync", "消息同步"),
+            ("heartbeat", "适配器心跳"),
+            ("polling", "WS 队列状态"),
+            ("ws_batch", "WS 批处理统计"),
+            ("api_timing", "API 耗时"),
+            ("debug", "详细调试日志"),
         ]
         self._debug_checks: dict[str, QCheckBox] = {}
         for key, label in categories:
@@ -704,8 +506,6 @@ class SettingsDialog(QDialog):
             else:
                 default = is_log_enabled(key)
             cb.setChecked(default)
-            set_log_level(key, default)
-            cb.toggled.connect(lambda checked, k=key: set_log_level(k, checked))
             self._debug_checks[key] = cb
             layout.addWidget(cb)
 
@@ -885,107 +685,76 @@ class SettingsDialog(QDialog):
         self._rebuild_wallpaper_gallery()
 
     def _on_clear_douyin_cache(self):
-        """清除聊天记录（缓存文件+DB消息），不碰Cookie
-        注意：clear_douyin_cache() 是同步 IO 操作但通常在 50ms 内完成，
-        用 QTimer.singleShot 延迟到事件循环执行，避免在按钮事件中阻塞。"""
+        """后台清除聊天记录和缓存，不触碰登录信息。"""
         btn = self.sender()
-        if btn: btn.setEnabled(False); btn.setText("清除中...")
-        def _do_clear():
-            try:
-                from dmshoot.utils.douyin_im_sync import clear_douyin_cache
-                clear_douyin_cache()
-                self.cache_cleared.emit("douyin")
-                show_glass_popup(self, "完成", "缓存已清除，正在重新拉取数据...", "ok")
-            except Exception as e:
-                show_glass_popup(self, "错误", f"清除失败: {e}", "warn")
-            finally:
-                if btn: btn.setEnabled(True); btn.setText("清除聊天记录缓存")
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(50, _do_clear)
+        if not btn or not btn.isEnabled():
+            return
+        self._cache_clear_button = btn
+        btn.setEnabled(False)
+        btn.setText("清除中...")
+        import threading
+        threading.Thread(
+            target=self._clear_douyin_cache_worker,
+            name="douyin-cache-clear",
+            daemon=True,
+        ).start()
+
+    def _clear_douyin_cache_worker(self):
+        try:
+            from dmshoot.utils.douyin_im_sync import clear_douyin_cache
+            clear_douyin_cache()
+            self.cache_clear_finished.emit(True, "")
+        except Exception as e:
+            self.cache_clear_finished.emit(False, str(e))
+
+    def _on_cache_clear_finished(self, ok: bool, error: str):
+        btn = self._cache_clear_button
+        self._cache_clear_button = None
+        if btn:
+            btn.setEnabled(True)
+            btn.setText("清除抖音聊天缓存")
+        if ok:
+            self.cache_cleared.emit("douyin")
+            show_toast(self, "缓存已清除，正在重新拉取数据", "success")
+        else:
+            show_glass_popup(self, "错误", f"清除失败: {error}", "warn")
 
     def reject(self):
-        """取消时恢复原始配置"""
-        # AppConfig 使用 slots=True，无 __dict__，需按字段逐个回退
-        from dmshoot.storage.models import AppConfig as _AC
-        for field_name in _AC.__dataclass_fields__:
-            setattr(self.config, field_name, getattr(self._orig_config, field_name))
+        """草稿未写入共享配置，取消可直接关闭。"""
         super().reject()
 
     def _on_save(self):
         """保存设置"""
-        # AI
-        self.config.api_key = self.api_key_input.text().strip()
-        self.config.base_url = self.base_url_input.text().strip()
-        self.config.model = self.model_input.text().strip()
-        self.config.prompt_preset = self.prompt_combo.currentText()
-        self.config.system_prompt = self.prompt_edit.text().strip()
-
-        # 平台
-        self.config.douyin_enabled = self.dy_enabled.isChecked()
-        self.config.douyin_cookie = self.dy_cookie.text().strip()
-        self.config.bilibili_enabled = self.bili_enabled.isChecked()
-        self.config.bilibili_sessdata = self.bili_sessdata.text().strip()
-        self.config.bilibili_jct = self.bili_jct.text().strip()
-        # self.config.xhs_enabled = self.xhs_enabled.isChecked()  # 小红书已废弃
-        # self.config.xhs_cookie = self.xhs_cookie.text().strip()
-
-        # 回复
-        self.config.auto_reply_enabled = self.auto_reply_enabled.isChecked()
-        self.config.reply_delay_min = self.delay_min.value()
-        self.config.reply_delay_max = self.delay_max.value()
-        self.config.max_context_rounds = self.context_rounds.value()
-
-        # 后端（性能页懒加载，可能尚未创建）
-        if hasattr(self, '_backend_combo'):
-            self.config.msg_backend = self._backend_combo.currentData()
-
-        # 发送限流
-        from dmshoot.core.rate_limiter import get_limiter
-        get_limiter("douyin").set_rate(self.rate_douyin.value())
-        get_limiter("bilibili").set_rate(self.rate_bilibili.value())
-        # get_limiter("xiaohongshu").set_rate(self.rate_xhs.value())  # 小红书已废弃
-        get_limiter("kuaishou").set_rate(self.rate_ks.value())
-
-        # 调试
         self._save_debug()
+        updates = {
+            "auto_reply_enabled": self.auto_reply_enabled.isChecked(),
+            "reply_delay_min": self.delay_min.value(),
+            "reply_delay_max": max(self.delay_min.value(), self.delay_max.value()),
+            "max_context_rounds": self.context_rounds.value(),
+            "rate_douyin": self.rate_douyin.value(),
+            "rate_bilibili": self.rate_bilibili.value(),
+            "rate_kuaishou": self.rate_ks.value(),
+            "wallpaper_path": self.config.wallpaper_path,
+            "wallpaper_gallery": list(self.config.wallpaper_gallery),
+            "debug_log_levels": self.config.debug_log_levels,
+        }
+        if hasattr(self, '_perf_toggle'):
+            updates["perf_monitor_enabled"] = self._perf_toggle.isChecked()
 
-        # 持久化
-        database.save_config(self.config)
+        # 认证字段不进入该事务，扫码线程更新 Cookie 时不会被设置页覆盖。
+        database.update_config_fields(updates)
+        self.config = database.load_config()
 
-        # 更新AI实例 — 仅在 AI 配置变化时重建
-        if self.config.api_key:
-            new_ai = (self.config.api_key, self.config.model, self.config.system_prompt, self.config.prompt_preset)
-            if new_ai != self._orig_ai:
-                prompt = self.config.system_prompt or PROMPTS.get(self.config.prompt_preset, "")
-                init_ai(
-                    api_key=self.config.api_key,
-                    system_prompt=prompt,
-                    model=self.config.model,
-                )
+        # 运行时设置在持久化成功后统一应用。
+        from dmshoot.core.rate_limiter import get_limiter
+        get_limiter("douyin").set_rate(self.config.rate_douyin)
+        get_limiter("bilibili").set_rate(self.config.rate_bilibili)
+        get_limiter("kuaishou").set_rate(self.config.rate_kuaishou)
+        from dmshoot.core.perf_monitor import get_monitor
+        get_monitor().set_enabled(self.config.perf_monitor_enabled)
+        from dmshoot.utils.console_log import set_log_level
+        import json as _json
+        for key, enabled in _json.loads(self.config.debug_log_levels or "{}").items():
+            set_log_level(key, enabled)
 
-        # 保存成功淡出提示
-        self._show_saved_toast()
         self.accept()
-
-    def _show_saved_toast(self):
-        """淡入淡出的'已保存'提示"""
-        toast = QLabel("已保存", self)
-        toast.setAlignment(Qt.AlignCenter)
-        toast.setStyleSheet(
-            "background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.75);"
-            "border: 1px solid rgba(255,255,255,0.10); border-radius: 8px;"
-            "font-size: 13px; padding: 8px 24px;"
-        )
-        toast.adjustSize()
-        toast.move((self.width() - toast.width()) // 2, 10)
-        toast.show()
-
-        effect = QGraphicsOpacityEffect()
-        toast.setGraphicsEffect(effect)
-        anim = QPropertyAnimation(effect, b"opacity")
-        anim.setDuration(1200)
-        anim.setStartValue(1.0)
-        anim.setEndValue(0.0)
-        anim.setEasingCurve(QEasingCurve.InCubic)
-        anim.finished.connect(toast.deleteLater)
-        anim.start()
