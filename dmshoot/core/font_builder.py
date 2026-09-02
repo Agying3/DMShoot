@@ -26,6 +26,9 @@ _SKIP_PARTS = {
     ".workbuddy",
 }
 _SOURCE_EXTENSIONS = ("*.py", "*.json", "*.ui", "*.qss", "*.txt", "*.md")
+# 这份文档会在小红书/快手没有 Web IM 时直接显示在应用内，属于 UI 文案。
+# docs/ 其余内容仍然跳过，避免把开发文档和历史报告全部塞进子集。
+_EXTRA_SOURCE_FILES = ("docs/XHS_IM_逆向日志.md",)
 _UI_FAMILY = "Aa偷吃可爱长大的 UI"
 _UI_FULL_NAME = "Aa 偷吃可爱长大的 UI"
 _UI_POSTSCRIPT_NAME = "AaCuteUI"
@@ -70,6 +73,15 @@ def _iter_source_files(src_root: str | pathlib.Path):
                     continue
                 seen.add(resolved)
                 yield path
+    for relative_path in _EXTRA_SOURCE_FILES:
+        path = root / relative_path
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        yield path
 
 
 def _collect_ui_chars(src_root: str | pathlib.Path, progress_cb=None) -> tuple[set[str], int]:

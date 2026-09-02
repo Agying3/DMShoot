@@ -667,12 +667,13 @@ class MessageGroupWidget(QWidget):
         self.rebind(self._messages, self._peer_avatar_url)
         return True
 
-    def set_max_width(self, width: int):
+    def set_max_width(self, width: int, refresh: bool = True):
         for row in self._bubble_rows:
             row.bubble.set_max_width(width)
             row.sync_height()
-        self._refresh_minimum_height()
-        self.updateGeometry()
+        if refresh:
+            self._refresh_minimum_height()
+            self.updateGeometry()
 
     def set_font_families(self, content_family: str, meta_family: str):
         """把聊天组内的正文、元信息和发送者名统一切换到同一模式。"""
@@ -955,11 +956,11 @@ class ChatView(QWidget):
 
     MAX_VISIBLE = 50
     MAX_READING_BUFFER = 20
-    INITIAL_VISIBLE = 12
+    # 保留旧方法的兼容常量；打开会话已不再启动历史分批加载。
     HISTORY_CHUNK = 4
 
     def load_messages(self, title: str, messages: list[ChatMessage], peer_avatar_url: str = ""):
-        """加载消息；初始只渲染末尾一小段，历史按组逐批补齐。"""
+        """一次性加载当前消息窗口，避免用户看到历史分批重排的中间态。"""
         self._reset_new_message_notice()
         self.title_label.setText(title)
         if peer_avatar_url:
@@ -969,14 +970,17 @@ class ChatView(QWidget):
         self._history_timer.stop()
         self._history_pending.clear()
 
-        all_messages = list(messages[-self.MAX_VISIBLE:])
-        initial = all_messages[-self.INITIAL_VISIBLE:]
-        self._display_messages = list(initial)
-        self._history_pending = list(all_messages[:-self.INITIAL_VISIBLE])
-        self._render_message_items(initial)
-        self._schedule_scroll(120, force=True)
-        if self._history_pending:
-            self._history_timer.start()
+        visible_messages = list(messages[-self.MAX_VISIBLE:])
+        self._display_messages = visible_messages
+        # 批量创建期间不让 viewport 绘制半成品；所有 group 建好后一次显示。
+        self.setUpdatesEnabled(False)
+        self.scroll.setUpdatesEnabled(False)
+        try:
+            self._render_message_items(visible_messages)
+        finally:
+            self.scroll.setUpdatesEnabled(True)
+            self.setUpdatesEnabled(True)
+        self._schedule_scroll(0, force=True)
 
     def _render_message_items(self, messages: list[ChatMessage], preserve_scroll: bool = False):
         """按消息组重排；重排时尽量复用同位置、同身份的组控件。"""
@@ -1155,7 +1159,7 @@ class ChatView(QWidget):
         max_width = min(MAX_BUBBLE_WIDTH, max(140, int(viewport_width * 0.65)))
         for item in self._content_items:
             if isinstance(item, MessageGroupWidget):
-                item.set_max_width(max_width)
+                item.set_max_width(max_width, refresh=False)
         # 宽度变化后立即同步组高度，首帧不再等待延迟 timer 才摆正气泡。
         self._refresh_group_heights()
 

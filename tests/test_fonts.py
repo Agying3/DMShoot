@@ -66,6 +66,21 @@ def test_builder_emits_real_woff(tmp_path):
         woff.close()
 
 
+def test_ui_scan_includes_xhs_kuaishou_reverse_log():
+    from dmshoot.core.font_builder import _collect_ui_chars
+
+    log_path = PROJECT / "docs" / "XHS_IM_逆向日志.md"
+    expected = {
+        char for char in log_path.read_text(encoding="utf-8")
+        if "\u4e00" <= char <= "\u9fff"
+    }
+    chars, files = _collect_ui_chars(PROJECT)
+
+    assert expected
+    assert files > 0
+    assert expected <= chars
+
+
 @pytest.mark.gui
 def test_frozen_font_dir_uses_user_override_and_survives_restart(tmp_path, monkeypatch, qapp):
     from dmshoot.gui.font_manager import FontManager

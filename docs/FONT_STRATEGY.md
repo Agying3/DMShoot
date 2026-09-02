@@ -19,7 +19,7 @@
 ## 二、为什么 UI 用子集、聊天用可选
 
 - 中文字体天生巨大：AaCute 完整版 **11.06 MB / 20902 汉字**；子集（只含 UI 用到的 889 字）**0.33 MB**。
-- UI 文案是**写死的**：构建时扫一遍 `dmshoot/` 源码 + `prompts/` 提示词就能扫全，缺字的字根本不会出现在界面上 → 子集零风险。
+- UI 文案是**写死的**：构建时扫描 `dmshoot/` 源码、`prompts/` 提示词和应用内直接展示的 `docs/XHS_IM_逆向日志.md`，缺字的字根本不会出现在界面上 → 子集零风险。
 - 聊天内容是**动态的**：用户昵称、私信正文不可预测，子集必然缺字 → 所以聊天区不能锁死可爱体，必须**可选项**（默认系统字体，勾选才用完整版）。
 
 ### 字体文件清单（已下载到 `tools/fonts/`）
@@ -160,7 +160,7 @@ PyInstaller 单文件程序的 `_MEIPASS` 是每次启动都会重新生成的�
 ### 重新生成子集
 UI 文案改了（新增中文按钮/弹窗）后重跑：
 ```bash
-python tools/subset_aacute.py    # 重新扫 dmshoot/ + prompts/ 生成 AaCute-UI.ttf/.woff
+python tools/subset_aacute.py    # 重新扫 dmshoot/ + prompts/ + XHS_IM 逆向日志生成 AaCute-UI.ttf/.woff
 ```
 
 ---

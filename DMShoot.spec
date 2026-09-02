@@ -55,6 +55,8 @@ datas = _prompt_datas + [
     ("tools/fonts/AaCute-UI.ttf", "fonts"),
     ("tools/fonts/full/AaCute-full.ttf", "fonts/full"),
     ("tools/fonts/JetBrainsMono.ttf", "fonts"),
+    # 无 IM 平台的逆向日志会在首页直接展示，也参与字体子集扫描
+    ("docs/XHS_IM_逆向日志.md", "docs"),
     # GUI 样式
     ("dmshoot/gui/styles.qss", "dmshoot/gui"),
     # 平台 icon

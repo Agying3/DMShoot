@@ -9,7 +9,7 @@
 
 在**设置页**新增一个独立的 **字体** tab，内含一个 **同步字体** 按钮：
 
-- 点击 → 重新扫描 **UI 源码（`dmshoot/`）** 与 **提示词（`prompts/` 下的 `.txt`）** 里出现的中文
+- 点击 → 重新扫描 **UI 源码（`dmshoot/`）**、**提示词（`prompts/` 下的 `.txt`）** 和应用内展示的 **`docs/XHS_IM_逆向日志.md`** 里出现的中文
 - 用 `fontTools` 重新生成 UI 子集 `AaCute-UI.ttf`（覆盖旧文件）
 - **热重载**进 `QFontDatabase`，即时应用到当前字体模式
 - 给用户一个明确的结果反馈（成功重建 N 字 / 不需要同步 / 失败原因）
@@ -188,7 +188,7 @@ def _collect_ui_chars(src_root):
 要点：
 - **临时文件 + 原子替换**：子集化失败绝不能损坏现有 `AaCute-UI.ttf`（打包后那是唯一可用字体）。
 - `subset_aacute.py` 改造为薄壳：`build_ui_subset(str(Path(__file__).parent.parent / "tools" / "fonts"))`，保持命令行可用。
-- 扫描范围与现有 `subset_aacute.py` 完全一致：`dmshoot/` + `prompts/`，排除 `.git`/`__pycache__`/`.workbuddy` 等。
+- 扫描范围为 `dmshoot/` + `prompts/`，并额外包含首页会直接展示的 `docs/XHS_IM_逆向日志.md`；其余 `docs/` 内容仍排除，避免把开发文档和历史报告全部纳入字体。
 
 ### Step 2 — `AppConfig` 加 `font_mode`
 

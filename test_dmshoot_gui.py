@@ -502,6 +502,7 @@ def test_chat_view_smart_new_messages():
     ]
     view.load_messages("测试会话", messages)
     QTest.qWait(220)
+    check("打开聊天不启动历史分批", not view._history_timer.isActive() and not view._history_pending)
     scrollbar = view.scroll.verticalScrollBar()
     scrollbar.setValue(scrollbar.minimum())
     _app.processEvents()
