@@ -16,6 +16,7 @@ from PySide6.QtGui import (
 )
 
 from dmshoot.storage.models import ChatMessage
+from dmshoot.gui.app_icon import application_icon_path
 
 
 AVATAR_SIZE = 36
@@ -795,10 +796,20 @@ class ChatView(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
 
+        title_row = QWidget()
+        title_layout = QHBoxLayout(title_row)
+        title_layout.setContentsMargins(16, 12, 16, 12)
+        title_layout.setSpacing(8)
+        self.title_icon = QLabel()
+        self.title_icon.setFixedSize(20, 20)
+        self.title_icon.setScaledContents(True)
+        self.title_icon.hide()
+        title_layout.addWidget(self.title_icon)
         self.title_label = QLabel("选择会话")
         self.title_label.setObjectName("sectionTitle")
-        self.title_label.setStyleSheet("padding: 12px 16px; font-size: 15px;")
-        layout.addWidget(self.title_label)
+        self.title_label.setStyleSheet("font-size: 15px;")
+        title_layout.addWidget(self.title_label, stretch=1)
+        layout.addWidget(title_row)
 
         self.scroll = QScrollArea()
         self.scroll.setObjectName("chatScroll")
@@ -866,6 +877,7 @@ class ChatView(QWidget):
 
     def show_placeholder(self, text: str):
         """显示空状态引导文字。"""
+        self.title_icon.hide()
         self.title_label.setText("")
         self._clear_content()
         self._placeholder = QLabel(text)
@@ -920,6 +932,12 @@ class ChatView(QWidget):
 
     def show_markdown(self, md_path: str, title: str = ""):
         """渲染 Markdown，替代空白聊天区域。"""
+        icon_path = application_icon_path()
+        if icon_path.is_file():
+            self.title_icon.setPixmap(QPixmap(str(icon_path)))
+            self.title_icon.show()
+        else:
+            self.title_icon.hide()
         self.title_label.setText(title)
         self._clear_content()
         self.bubble_layout.takeAt(self.bubble_layout.count() - 1)
@@ -951,6 +969,7 @@ class ChatView(QWidget):
 
     def clear_markdown(self):
         """清除 Markdown 视图，恢复消息模式。"""
+        self.title_icon.hide()
         self.title_label.setText("选择会话")
         self._clear_content()
 
@@ -961,6 +980,7 @@ class ChatView(QWidget):
 
     def load_messages(self, title: str, messages: list[ChatMessage], peer_avatar_url: str = ""):
         """一次性加载当前消息窗口，避免用户看到历史分批重排的中间态。"""
+        self.title_icon.hide()
         self._reset_new_message_notice()
         self.title_label.setText(title)
         if peer_avatar_url:

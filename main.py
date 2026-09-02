@@ -57,6 +57,7 @@ def main():
     try:
         from PySide6.QtWidgets import QApplication, QMessageBox
         from PySide6.QtCore import Qt
+        from dmshoot.gui.app_icon import application_icon
 
         # 默认交给 Qt 选择硬件渲染。显卡驱动有兼容问题时可显式回退。
         if os.environ.get("DMSHOOT_SOFTWARE_RENDER") == "1":
@@ -64,6 +65,7 @@ def main():
         app = QApplication(sys.argv)
         app.setApplicationName("DMShoot")
         app.setOrganizationName("DMShoot")
+        app.setWindowIcon(application_icon())
 
         # 延迟并后台准备 Playwright，不阻塞首屏显示和用户操作
         from PySide6.QtCore import QTimer

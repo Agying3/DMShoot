@@ -38,6 +38,7 @@ from dmshoot.gui.signal_wiring import SignalWiring
 from dmshoot.gui.workers.ai_worker import AIWorker, ActiveAIWorker
 from dmshoot.gui.widgets.toast import show_toast
 from dmshoot.gui.font_manager import FontManager
+from dmshoot.gui.app_icon import application_icon
 
 logger = get_logger(__name__)
 
@@ -319,6 +320,7 @@ class MarkdownViewer(QDialog):
         super().__init__(parent)
         self._md_path = md_path
         self.setWindowTitle(title)
+        self.setWindowIcon(application_icon())
         self.setMinimumSize(780, 600)
         self.resize(820, 720)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -415,6 +417,7 @@ class MainWindow(QMainWindow):
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowTitle("DMShoot")
+        self.setWindowIcon(application_icon())
         self.setMinimumSize(900, 520)
         self.resize(1100, 620)
 
