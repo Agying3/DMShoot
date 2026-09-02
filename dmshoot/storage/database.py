@@ -534,8 +534,31 @@ def get_messages(session_id: str, limit: int = 50) -> list[ChatMessage]:
     conn = _get_conn()
     rows = conn.execute("""
         SELECT * FROM messages WHERE session_id=?
-        ORDER BY timestamp DESC LIMIT ?
+        ORDER BY timestamp DESC, id DESC LIMIT ?
     """, (session_id, limit)).fetchall()
+    return [_row_to_message(r) for r in reversed(rows)]
+
+
+def get_messages_before(
+    session_id: str,
+    before_timestamp: float,
+    before_id: int = 0,
+    limit: int = 100,
+) -> list[ChatMessage]:
+    """获取指定消息之前的一页历史，返回 oldest first。"""
+    conn = _get_conn()
+    if before_id:
+        rows = conn.execute("""
+            SELECT * FROM messages
+            WHERE session_id=? AND (timestamp < ? OR (timestamp = ? AND id < ?))
+            ORDER BY timestamp DESC, id DESC LIMIT ?
+        """, (session_id, before_timestamp, before_timestamp, before_id, limit)).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT * FROM messages
+            WHERE session_id=? AND timestamp < ?
+            ORDER BY timestamp DESC, id DESC LIMIT ?
+        """, (session_id, before_timestamp, limit)).fetchall()
     return [_row_to_message(r) for r in reversed(rows)]
 
 

@@ -12,6 +12,9 @@ hiddenimports = [
     # PySide6
     "PySide6.QtPrintSupport",
     "PySide6.QtSql",
+    "PySide6.QtQml",
+    "PySide6.QtQuick",
+    "PySide6.QtQuickWidgets",
     # dmshoot plugins (动态加载)
     "dmshoot.plugins.douyin.adapter",
     "dmshoot.plugins.bilibili.adapter",
@@ -59,6 +62,8 @@ datas = _prompt_datas + [
     ("docs/XHS_IM_逆向日志.md", "docs"),
     # GUI 样式
     ("dmshoot/gui/styles.qss", "dmshoot/gui"),
+    # Qt Quick 虚拟聊天区
+    ("dmshoot/gui/qml/", "dmshoot/gui/qml"),
     # 平台 icon
     ("resources/", "resources"),
     # DouYin_Spider SDK (签名 JS)

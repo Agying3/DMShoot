@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QTimer
 
 from dmshoot.gui.widgets.ruler import PlatformRuler
 from dmshoot.gui.widgets.contact import ContactList
-from dmshoot.gui.widgets.chat_view import ChatView
+from dmshoot.gui.quick_chat_view import ChatView
 from dmshoot.gui.monitor_panel import MonitorPanel
 from dmshoot.storage import database
 from dmshoot.storage.models import SessionRecord
@@ -16,12 +16,17 @@ _IM_UNAVAILABLE = frozenset({"xiaohongshu", "kuaishou"})  # Web 端不支持 IM
 
 
 class HomePage(QWidget):
+    MESSAGE_PAGE_SIZE = 100
+
     def __init__(self, monitor: MonitorPanel, platforms: list[tuple[str, str]], font_manager=None):
         super().__init__()
         self.monitor = monitor
         self._current_platform = platforms[0][0] if platforms else "bilibili"
         self._current_session: str = ""
         self._msg_cache: dict[str, list] = {}  # 消息缓存，避免重复读DB
+        self._history_cursor: dict[str, tuple[float, int]] = {}
+        self._history_has_more: dict[str, bool] = {}
+        self._history_loading = False
         # 通讯录节流：高频消息时 500ms 内只刷新一次
         self._contacts_throttle = QTimer(self)
         self._contacts_throttle.setSingleShot(True)
@@ -49,6 +54,7 @@ class HomePage(QWidget):
 
         # 右：对话气泡
         self.chat = ChatView(font_manager=font_manager)
+        self.chat.history_requested.connect(self._load_older_messages)
         hbox.addWidget(self.chat, stretch=1)
 
         horizontal_container = QWidget()
@@ -106,8 +112,13 @@ class HomePage(QWidget):
         self._current_session = session_id
         database.reset_unread(session_id)  # 进入会话时清零未读
         self._msg_cache.pop(session_id, None)
-        msgs = database.get_messages(session_id, limit=100)
+        msgs = database.get_messages(session_id, limit=self.MESSAGE_PAGE_SIZE)
         self._msg_cache[session_id] = msgs
+        self._history_has_more[session_id] = len(msgs) >= self.MESSAGE_PAGE_SIZE
+        if msgs:
+            self._history_cursor[session_id] = (msgs[0].timestamp, msgs[0].id)
+        else:
+            self._history_cursor.pop(session_id, None)
         session = next(
             (item for item in database.get_sessions(self._current_platform)
              if item.session_id == session_id),
@@ -115,7 +126,42 @@ class HomePage(QWidget):
         )
         peer_avatar_url = session.avatar_url if session else ""
         self.chat.set_conversation(session_id, peer_avatar_url)
+        self.chat.set_history_available(self._history_has_more.get(session_id, False))
         self.chat.load_messages(peer_name, msgs, peer_avatar_url)
+
+    def _load_older_messages(self, session_id: str):
+        """滚动到顶部时向 SQLite 读取更早的一页，并保持可视消息锚点。"""
+        if session_id != self._current_session or self._history_loading:
+            return
+        if not self._history_has_more.get(session_id, False):
+            self.chat.set_history_available(False)
+            return
+        cursor = self._history_cursor.get(session_id)
+        if cursor is None:
+            self._history_has_more[session_id] = False
+            self.chat.set_history_available(False)
+            return
+
+        self._history_loading = True
+        try:
+            before_timestamp, before_id = cursor
+            older = database.get_messages_before(
+                session_id,
+                before_timestamp,
+                before_id=before_id,
+                limit=self.MESSAGE_PAGE_SIZE,
+            )
+            if older:
+                cache = self._msg_cache.get(session_id, [])
+                self._msg_cache[session_id] = older + cache
+                self._history_cursor[session_id] = (older[0].timestamp, older[0].id)
+                self.chat.prepend_messages(older)
+            has_more = len(older) >= self.MESSAGE_PAGE_SIZE
+            self._history_has_more[session_id] = has_more
+            self.chat.set_history_available(has_more)
+        finally:
+            self._history_loading = False
+            self.chat.history_load_finished()
 
     def refresh_session(self, session_id: str):
         """新联系人或资料补全后，按现有节流策略刷新当前平台。"""
