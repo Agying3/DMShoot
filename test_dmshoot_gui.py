@@ -623,6 +623,88 @@ def test_chat_view_tg_avatar_stick():
     view.close()
 
 
+def test_chat_view_initial_layout_has_no_pile():
+    """首帧和宽度刷新后，每个 row 都有独立垂直位置。"""
+    from PySide6.QtTest import QTest
+    from dmshoot.gui.widgets.chat_view import ChatView, MessageGroupWidget
+    from dmshoot.storage.models import ChatMessage
+
+    view = ChatView()
+    view.resize(460, 260)
+    view.show()
+    messages = [
+        ChatMessage(
+            session_id="b:layout", sender_name="Alice", sender_id="alice",
+            content=f"第{i}条 " + "首帧布局不能挤在一起 " * 4,
+            timestamp=1771000000 + i,
+        )
+        for i in range(12)
+    ]
+    view.load_messages("Alice", messages)
+    _app.processEvents()
+    QTest.qWait(1)
+    _app.processEvents()
+
+    group = next(item for item in view._content_items if isinstance(item, MessageGroupWidget))
+    rows = group._bubble_rows
+    check("首帧组高度覆盖所有气泡", group.height() >= sum(row.height() for row in rows))
+    check(
+        "首帧气泡垂直不重叠",
+        all(next_row.y() >= row.y() + row.height()
+            for row, next_row in zip(rows, rows[1:])),
+    )
+    view.close()
+
+
+def test_chat_view_tg_avatar_reaches_group_top():
+    """从最新消息向上滚动时，头像由组底被挤到组顶。"""
+    from PySide6.QtTest import QTest
+    from dmshoot.gui.widgets.chat_view import ChatView, MessageGroupWidget
+    from dmshoot.storage.models import ChatMessage
+
+    view = ChatView()
+    view.resize(460, 260)
+    view.show()
+    messages = [
+        ChatMessage(
+            session_id="b:avatar", sender_name="Before", sender_id="before",
+            content="前置消息 " * 5, timestamp=1772000000 + i,
+        )
+        for i in range(8)
+    ]
+    messages += [
+        ChatMessage(
+            session_id="b:avatar", sender_name="Alice", sender_id="alice",
+            content=f"目标消息{i} " + "头像吸附测试 " * 5,
+            timestamp=1772001000 + i,
+        )
+        for i in range(18)
+    ]
+    messages.append(ChatMessage(
+        session_id="b:avatar", sender_name="After", sender_id="after",
+        content="尾部消息", timestamp=1772002000,
+    ))
+    view._display_messages = list(messages)
+    view._render_message_items(messages)
+    _app.processEvents()
+    QTest.qWait(1)
+    _app.processEvents()
+
+    groups = [item for item in view._content_items if isinstance(item, MessageGroupWidget)]
+    group = groups[1]
+    scrollbar = view.scroll.verticalScrollBar()
+    scrollbar.setValue(scrollbar.maximum())
+    _app.processEvents()
+    check("头像初始贴目标组底", group.avatar.y() == group.height() - 36)
+
+    stick_vp = view.scroll.viewport().height() - 36 - 4
+    top_scroll = max(0, group.y() - stick_vp)
+    scrollbar.setValue(top_scroll)
+    _app.processEvents()
+    check("头像上滑后被挤到目标组顶", group.avatar.y() == 0)
+    view.close()
+
+
 def test_navigation_interactions():
     """导航指示条和重连状态都能安全更新。"""
     from PySide6.QtTest import QTest
@@ -1153,6 +1235,8 @@ ALL_TESTS: list[tuple[str, callable]] = [
     ("ChatView 智能新消息", test_chat_view_smart_new_messages),
     ("ChatView TG 消息分组", test_chat_view_tg_message_groups),
     ("ChatView TG 头像吸附", test_chat_view_tg_avatar_stick),
+    ("ChatView 首帧布局", test_chat_view_initial_layout_has_no_pile),
+    ("ChatView 头像挤到组顶", test_chat_view_tg_avatar_reaches_group_top),
     ("导航交互", test_navigation_interactions),
     ("轻提示交互", test_toast_interaction),
 

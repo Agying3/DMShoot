@@ -38,10 +38,19 @@ def test_builder_emits_real_woff(tmp_path):
         font_dir / "full" / "AaCute-full.ttf",
     )
 
-    result = build_ui_subset(font_dir, commit=True)
+    progress = []
+    result = build_ui_subset(
+        font_dir,
+        progress_cb=lambda value, _message: progress.append(value),
+        commit=True,
+    )
     ttf_path = Path(result["path"])
     woff_path = Path(result["woff_path"])
 
+    assert progress
+    assert progress == sorted(progress)
+    assert progress[-1] == 1.0
+    assert any(0.05 < value < 0.48 for value in progress)
     assert ttf_path.exists()
     assert woff_path.exists()
     assert woff_path.read_bytes()[:4] == b"wOFF"
@@ -130,9 +139,14 @@ def test_settings_waits_for_font_worker_before_closing(qapp, qtbot, temp_db, tmp
         def reload_ui_font(self, _temporary_path):
             return True
 
-    def slow_build(_font_dir, commit=False):
+    def slow_build(_font_dir, progress_cb=None, commit=False):
         assert commit is False
-        time.sleep(0.15)
+        if progress_cb:
+            progress_cb(0.15, "正在扫描 UI 文案 (1/3)")
+        time.sleep(0.20)
+        if progress_cb:
+            progress_cb(0.72, "正在生成 UI 字体子集…")
+        time.sleep(0.20)
         return {"temporary_path": "", "chars": 2, "total": 3}
 
     monkeypatch.setattr(font_builder, "build_ui_subset", slow_build)
@@ -145,8 +159,11 @@ def test_settings_waits_for_font_worker_before_closing(qapp, qtbot, temp_db, tmp
         lambda: dialog._sync_worker is not None and dialog._sync_worker.isRunning(),
         timeout=2000,
     )
+    qtbot.waitUntil(lambda: dialog._font_progress.value() >= 15, timeout=2000)
+    assert dialog._font_progress.value() >= 15
     dialog.reject()
     assert dialog.isVisible()
 
     qtbot.waitUntil(lambda: dialog._sync_worker is None, timeout=5000)
     qtbot.waitUntil(lambda: not dialog.isVisible(), timeout=2000)
+    assert dialog._font_progress.value() == 100

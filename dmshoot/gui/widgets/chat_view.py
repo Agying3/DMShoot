@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QSizePolicy,
     QTextBrowser, QPushButton, QFrame,
 )
-from PySide6.QtCore import QEvent, Qt, QTimer, QRect, QSize
+from PySide6.QtCore import QEvent, Qt, QTimer, QRect, QSize, QPoint
 from PySide6.QtGui import (
     QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPixmap, QPen, QTextOption,
 )
@@ -573,6 +573,7 @@ class MessageGroupWidget(QWidget):
         self._peer_avatar_url = peer_avatar_url
         self._bubble_rows: list[BubbleRowWidget] = []
         self._sender_labels: list[QLabel] = []
+        self._avatar_y: int | None = None
         self._content_family = "Microsoft YaHei"
         self._meta_family = "Segoe UI"
 
@@ -584,6 +585,7 @@ class MessageGroupWidget(QWidget):
         self.stack = QVBoxLayout()
         self.stack.setContentsMargins(0, 0, 0, 0)
         self.stack.setSpacing(MESSAGE_SEAM)
+        self.stack.setAlignment(Qt.AlignTop)
 
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -608,6 +610,7 @@ class MessageGroupWidget(QWidget):
 
     def rebind(self, messages: list[ChatMessage], peer_avatar_url: str = ""):
         self.setMinimumHeight(0)
+        self._avatar_y = None
         self._messages = list(messages)
         self._peer_avatar_url = peer_avatar_url or self._peer_avatar_url
         self._group_key = _group_key(self._messages[0]) if self._messages else None
@@ -690,10 +693,32 @@ class MessageGroupWidget(QWidget):
     def _refresh_minimum_height(self):
         for row in self._bubble_rows:
             row.sync_height()
+        # 不依赖 QVBoxLayout 尚未完成的 sizeHint，直接按可见子项计算自然高度。
+        # 首帧布局时这能避免多条气泡暂时共享同一个旧高度而挤在一起。
+        item_count = self.stack.count()
+        natural_height = 0
+        for index in range(item_count):
+            item = self.stack.itemAt(index)
+            widget = item.widget()
+            if widget is None:
+                continue
+            if isinstance(widget, BubbleRowWidget):
+                child_height = widget.height()
+            else:
+                # 标签实际高度可能暂时被外层布局拉满；自然高度只能采用
+                # sizeHint，否则这次错误分配会把整组气泡永久推到底部。
+                child_height = widget.sizeHint().height()
+            natural_height += max(1, child_height)
+        if item_count > 1:
+            natural_height += self.stack.spacing() * (item_count - 1)
+        margins = self.stack.contentsMargins()
+        natural_height += margins.top() + margins.bottom()
+        self.setFixedHeight(max(AVATAR_SIZE, natural_height))
+        # 先确定 group 高度，再激活两层布局，确保首帧就拿到正确的 row.y。
         self.stack.invalidate()
         self._layout.invalidate()
-        natural_height = self.stack.sizeHint().height()
-        self.setMinimumHeight(max(AVATAR_SIZE, natural_height))
+        self._layout.activate()
+        self.stack.activate()
 
     def _clear_stack(self):
         self._bubble_rows.clear()
@@ -708,15 +733,25 @@ class MessageGroupWidget(QWidget):
 
     def _refresh_avatar_position(self):
         slot_height = max(0, self.avatar_slot.height())
-        y = max(0, slot_height - AVATAR_SIZE)
+        max_offset = max(0, self.height() - AVATAR_SIZE)
+        if self._avatar_y is None:
+            y = max(0, slot_height - AVATAR_SIZE)
+        else:
+            y = max(0, min(self._avatar_y, max_offset))
+        self._avatar_y = y
         self.avatar.move((AVATAR_SLOT_WIDTH - AVATAR_SIZE) // 2, y)
 
     def update_avatar_position(self, scroll_top: int, viewport_height: int):
-        group_top = self.y()
+        parent = self.parentWidget()
+        group_top = (
+            self.mapTo(parent, QPoint(0, 0)).y()
+            if parent is not None else self.y()
+        )
         max_offset = max(0, self.height() - AVATAR_SIZE)
         stick_vp = viewport_height - AVATAR_SIZE - AVATAR_STICK_BOTTOM
         target = scroll_top + stick_vp - group_top
         y = max(0, min(target, max_offset))
+        self._avatar_y = y
         self.avatar.move((AVATAR_SLOT_WIDTH - AVATAR_SIZE) // 2, y)
 
     def resizeEvent(self, event):
@@ -796,6 +831,7 @@ class ChatView(QWidget):
         self._new_message_button.clicked.connect(self._jump_to_latest)
         self._new_message_button.hide()
         self.scroll.viewport().installEventFilter(self)
+        self.bubble_container.installEventFilter(self)
         self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll_value_changed)
 
         self._scroll_timer = QTimer(self)
@@ -806,9 +842,6 @@ class ChatView(QWidget):
         self._history_timer = QTimer(self)
         self._history_timer.setInterval(30)
         self._history_timer.timeout.connect(self._load_history_chunk)
-        self._group_refresh_timer = QTimer(self)
-        self._group_refresh_timer.setSingleShot(True)
-        self._group_refresh_timer.timeout.connect(self._refresh_group_heights)
 
     def set_conversation(self, conversation_id: str, peer_avatar_url: str = ""):
         self._conversation_id = conversation_id or ""
@@ -1002,7 +1035,7 @@ class ChatView(QWidget):
         self._update_bubble_widths()
 
         def restore_position():
-            if preserve_scroll:
+            if preserve_scroll and scrollbar.value() == old_value:
                 scrollbar.setValue(old_value + max(0, scrollbar.maximum() - old_maximum))
             self._update_avatar_positions()
 
@@ -1023,8 +1056,13 @@ class ChatView(QWidget):
 
         def keep_position():
             if was_at_bottom:
-                scrollbar.setValue(scrollbar.maximum())
-            else:
+                # 历史批次的延迟回调不能抢回用户刚滚动到的位置。
+                # 只有滚动条仍在底部时，才执行加载期间的自动跟随。
+                if self._is_near_bottom():
+                    scrollbar.setValue(scrollbar.maximum())
+            elif scrollbar.value() == old_value:
+                # 用户未介入时，为保持原消息锚点补上新增历史高度；
+                # 如果当前值已变化，说明用户已经主动滚动，应保留其选择。
                 scrollbar.setValue(old_value + max(0, scrollbar.maximum() - old_maximum))
             self._update_avatar_positions()
 
@@ -1118,8 +1156,8 @@ class ChatView(QWidget):
         for item in self._content_items:
             if isinstance(item, MessageGroupWidget):
                 item.set_max_width(max_width)
-        if not self._group_refresh_timer.isActive():
-            self._group_refresh_timer.start(0)
+        # 宽度变化后立即同步组高度，首帧不再等待延迟 timer 才摆正气泡。
+        self._refresh_group_heights()
 
     def _refresh_group_heights(self):
         for item in self._content_items:
@@ -1128,6 +1166,7 @@ class ChatView(QWidget):
         self.bubble_layout.invalidate()
         self.bubble_layout.activate()
         self.bubble_container.updateGeometry()
+        self._update_avatar_positions()
 
     def _update_avatar_positions(self):
         viewport = self.scroll.viewport()
@@ -1147,6 +1186,10 @@ class ChatView(QWidget):
         if watched is self.scroll.viewport() and event.type() in (QEvent.Resize, QEvent.Show):
             self._position_new_message_button()
             self._update_bubble_widths()
+            QTimer.singleShot(0, self._update_avatar_positions)
+        elif watched is self.bubble_container and event.type() in (
+            QEvent.Resize, QEvent.LayoutRequest,
+        ):
             QTimer.singleShot(0, self._update_avatar_positions)
         return super().eventFilter(watched, event)
 

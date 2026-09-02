@@ -54,27 +54,45 @@ def _resolve_paths(font_dir: str | pathlib.Path):
     return source_root, full_path
 
 
-def _collect_ui_chars(src_root: str | pathlib.Path) -> tuple[set[str], int]:
-    """扫描 UI 源码和公开提示词中的汉字。"""
+def _iter_source_files(src_root: str | pathlib.Path):
+    """按稳定顺序枚举扫描范围内的源码文件。"""
     root = pathlib.Path(src_root)
-    chars: set[str] = set()
-    files = 0
+    seen: set[pathlib.Path] = set()
     for source_dir in (root / "dmshoot", root / "prompts"):
         if not source_dir.exists():
             continue
         for extension in _SOURCE_EXTENSIONS:
-            for path in source_dir.rglob(extension):
+            for path in sorted(source_dir.rglob(extension)):
                 if _SKIP_PARTS.intersection(path.parts):
                     continue
-                try:
-                    content = path.read_text(encoding="utf-8", errors="ignore")
-                except OSError as exc:
-                    print(f"skip {path}: {exc}", file=sys.stderr)
+                resolved = path.resolve()
+                if resolved in seen:
                     continue
-                found = {char for char in content if "\u4e00" <= char <= "\u9fff"}
-                if found:
-                    chars.update(found)
-                    files += 1
+                seen.add(resolved)
+                yield path
+
+
+def _collect_ui_chars(src_root: str | pathlib.Path, progress_cb=None) -> tuple[set[str], int]:
+    """扫描 UI 源码和公开提示词中的汉字，并报告逐文件进度。"""
+    chars: set[str] = set()
+    files = 0
+    source_files = list(_iter_source_files(src_root))
+    total = len(source_files)
+    for index, path in enumerate(source_files, 1):
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError as exc:
+            print(f"skip {path}: {exc}", file=sys.stderr)
+            content = ""
+        found = {char for char in content if "\u4e00" <= char <= "\u9fff"}
+        if found:
+            chars.update(found)
+            files += 1
+        if progress_cb:
+            progress_cb(
+                0.05 + 0.40 * index / max(1, total),
+                f"正在扫描 UI 文案 ({index}/{total})",
+            )
     return chars, files
 
 
@@ -124,22 +142,28 @@ def build_ui_subset(
         raise RuntimeError("缺少依赖 fontTools，请安装 fonttools brotli") from exc
 
     source_root, full_path = _resolve_paths(font_dir)
+    if progress_cb:
+        progress_cb(0.02, "正在检查字体资源…")
     if not full_path.exists():
         raise RuntimeError("缺少完整字体 AaCute-full.ttf，无法重建")
 
-    chars, files = _collect_ui_chars(source_root)
+    chars, files = _collect_ui_chars(source_root, progress_cb)
     if not chars or not files:
         raise RuntimeError("未找到可扫描的 UI 源码/公开提示词")
     if progress_cb:
-        progress_cb(0.3, f"已扫描 {files} 个文件，正在生成子集…")
+        progress_cb(0.48, f"已扫描 {files} 个文件，正在载入完整字体…")
 
     options = font_subset.Options()
     options.glyph_names = False
     options.notdef_outline = True
     options.recalc_bounds = True
+    if progress_cb:
+        progress_cb(0.55, "正在载入完整字体…")
     font = font_subset.load_font(str(full_path), options)
     subsetter = font_subset.Subsetter(options=options)
     subsetter.populate(text=_build_text(chars))
+    if progress_cb:
+        progress_cb(0.65, "正在生成 UI 字体子集…")
     subsetter.subset(font)
 
     output = pathlib.Path(font_dir).resolve() / "AaCute-UI.ttf"
@@ -147,7 +171,11 @@ def build_ui_subset(
     temporary = output.with_name(f"{output.name}.{os.getpid()}.tmp")
     build_succeeded = False
     try:
+        if progress_cb:
+            progress_cb(0.76, "正在写入 TTF 临时文件…")
         font_subset.save_font(font, str(temporary), options)
+        if progress_cb:
+            progress_cb(0.82, "正在校正字体名称…")
         _rename_family(temporary)
         if commit:
             temporary.replace(output)
@@ -164,6 +192,8 @@ def build_ui_subset(
     woff_temporary = woff_output.with_name(f"{woff_output.name}.{os.getpid()}.tmp")
     woff_font = None
     try:
+        if progress_cb:
+            progress_cb(0.90, "正在生成 WOFF 预览字体…")
         woff_font = TTFont(str(result_path))
         woff_font.flavor = "woff"
         woff_font.save(str(woff_temporary))
@@ -178,6 +208,8 @@ def build_ui_subset(
             woff_check.close()
         # WOFF 不会被 Qt 占用，后台同步时也可以直接更新预览资源。
         woff_temporary.replace(woff_output)
+        if progress_cb:
+            progress_cb(0.97, "正在校验生成结果…")
     except Exception as exc:
         print(f"WOFF 未生成: {exc}", file=sys.stderr)
     finally:

@@ -241,6 +241,20 @@ QPushButton:disabled {
     border-color: rgba(255,255,255,0.04);
 }
 
+QProgressBar#fontSyncProgress {
+    min-height: 8px;
+    max-height: 18px;
+    border: 1px solid rgba(255,255,255,0.10);
+    border-radius: 5px;
+    background: rgba(255,255,255,0.06);
+    color: rgba(255,255,255,0.72);
+    text-align: center;
+}
+QProgressBar#fontSyncProgress::chunk {
+    border-radius: 4px;
+    background: #6AC5E8;
+}
+
 /* ── Telegram 风格聊天分组 ── */
 QWidget#chatBubbleContainer {
     background: transparent;

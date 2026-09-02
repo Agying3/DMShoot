@@ -5,7 +5,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget,
     QLabel, QCheckBox, QComboBox, QPushButton, QDoubleSpinBox,
-    QGroupBox, QFormLayout, QSpinBox, QScrollArea, QFrame
+    QGroupBox, QFormLayout, QSpinBox, QScrollArea, QFrame, QProgressBar
 )
 from PySide6.QtCore import Qt, Signal, QThread
 
@@ -338,6 +338,15 @@ class SettingsDialog(QDialog):
         sync_row.addWidget(self._font_status_label, 1)
         font_layout.addLayout(sync_row)
 
+        self._font_progress = QProgressBar()
+        self._font_progress.setObjectName("fontSyncProgress")
+        self._font_progress.setRange(0, 100)
+        self._font_progress.setValue(0)
+        self._font_progress.setFormat("%p%")
+        self._font_progress.setToolTip("显示字体扫描、生成和校验的实时进度")
+        self._font_progress.setFixedHeight(18)
+        font_layout.addWidget(self._font_progress)
+
         layout.addWidget(font_group)
         layout.addStretch()
         return w
@@ -367,15 +376,26 @@ class SettingsDialog(QDialog):
         self._sync_font_btn.setEnabled(False)
         self._sync_font_btn.setText("同步中…")
         self._font_status_label.setText("正在扫描 UI 文案…")
+        self._font_progress.setValue(0)
         font_dir = str(self.font_manager.font_dir)
 
         class _FontSyncWorker(QThread):
             done = Signal(object)
+            progress = Signal(int, str)
 
             def run(self):
                 try:
                     from dmshoot.core.font_builder import build_ui_subset
-                    result = build_ui_subset(font_dir, commit=False)
+
+                    def on_progress(value, message):
+                        self.progress.emit(
+                            max(0, min(100, int(round(float(value) * 100)))),
+                            str(message),
+                        )
+
+                    result = build_ui_subset(
+                        font_dir, progress_cb=on_progress, commit=False
+                    )
                     self.done.emit(("ok", result, ""))
                 except RuntimeError as exc:
                     self.done.emit(("skipped", None, str(exc)))
@@ -383,6 +403,7 @@ class SettingsDialog(QDialog):
                     self.done.emit(("error", None, str(exc)))
 
         worker = _FontSyncWorker(self)
+        worker.progress.connect(self._on_sync_font_progress)
         worker.done.connect(self._on_sync_font_done)
         worker.finished.connect(self._on_sync_worker_finished)
         worker.finished.connect(worker.deleteLater)
@@ -391,12 +412,19 @@ class SettingsDialog(QDialog):
         self._sync_worker = worker
         worker.start()
 
+    def _on_sync_font_progress(self, value: int, message: str):
+        """接收后台字体构建的阶段进度，始终在 Qt 主线程更新控件。"""
+        self._font_progress.setValue(max(0, min(100, int(value))))
+        if message:
+            self._font_status_label.setText(message)
+
     def _on_sync_font_done(self, payload):
         status, result, reason = payload
         self._sync_font_btn.setEnabled(True)
         self._sync_font_btn.setText("同步字体")
         self._sync_result_handled = True
         if status == "ok":
+            self._font_progress.setValue(100)
             temporary_path = result.get("temporary_path") if result else None
             if not self.font_manager.reload_ui_font(temporary_path):
                 self._font_status_label.setText("子集已生成，但字体热加载失败")
@@ -407,6 +435,7 @@ class SettingsDialog(QDialog):
                 self._font_status_label.setText(f"已重建 {chars} 个汉字，重启后最稳")
                 show_toast(self, f"字体已同步，覆盖 {chars} 个汉字", "success")
         elif status == "skipped":
+            self._font_progress.setValue(0)
             self._font_status_label.setText(reason)
             show_toast(self, f"无需同步：{reason}", "warning")
         else:
