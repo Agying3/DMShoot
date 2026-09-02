@@ -93,5 +93,6 @@ class AppConfig:
     # 界面
     wallpaper_path: str = ""  # 当前活跃壁纸路径（空=默认）
     wallpaper_gallery: list[str] = field(default_factory=list)  # 已添加的自定义壁纸集合
+    font_mode: str = "ui-aacute"  # system | ui-aacute | full-aacute
     debug_log_levels: str = ""  # 调试日志开关 JSON: {"heartbeat": true, "polling": false, ...}
     perf_monitor_enabled: bool = True

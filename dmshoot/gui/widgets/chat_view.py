@@ -1,130 +1,761 @@
-"""对话气泡视图 — 支持增量复用避免全量重建"""
+"""对话视图：Telegram 风格消息分组、气泡和头像吸附。"""
 
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
+import hashlib
 
 import markdown
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QSizePolicy,
-    QTextBrowser, QPushButton,
+    QTextBrowser, QPushButton, QFrame,
 )
-from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QTextOption
+from PySide6.QtCore import QEvent, Qt, QTimer, QRect, QSize
+from PySide6.QtGui import (
+    QColor, QFont, QFontMetrics, QPainter, QPainterPath, QPixmap, QPen, QTextOption,
+)
+
 from dmshoot.storage.models import ChatMessage
 
 
-class BubbleWidget(QWidget):
-    """单条消息气泡 — 支持 rebind() 复用"""
+AVATAR_SIZE = 36
+AVATAR_SLOT_WIDTH = 52
+AVATAR_STICK_BOTTOM = 4
+BUBBLE_RADIUS = 13
+SEAM_RADIUS = 4
+GROUP_SPACING = 9
+MESSAGE_SEAM = 2
+MAX_BUBBLE_WIDTH = 480
+BUBBLE_FONT_FAMILY = "Microsoft YaHei"
+BUBBLE_FONT_SIZE = 16
+META_FONT_SIZE = 12
+BUBBLE_MIN_HEIGHT = 30
+CHECK_FONT_SIZE = 11
+BUBBLE_TAIL_WIDTH = 6
+BUBBLE_TAIL_HEIGHT = 7
+BUBBLE_PADDING_LEFT = 8
+BUBBLE_PADDING_RIGHT = 7
+BUBBLE_PADDING_TOP = 4
+BUBBLE_PADDING_BOTTOM = 5
+BUBBLE_META_SPACING = 4
+META_ITEM_SPACING = 2
+CHECK_WIDTH = 18
 
-    def __init__(self, message: ChatMessage = None, parent=None):
+INCOMING_BUBBLE_COLOR = "#212121"
+OUTGOING_BUBBLE_COLOR = "#8774E1"
+INCOMING_META_COLOR = "#A7A7A7"
+OUTGOING_META_COLOR = "#B3A7EC"
+OUTGOING_CHECK_COLOR = "#F7F4FF"
+
+
+def _message_is_self(message: ChatMessage) -> bool:
+    return bool(message.is_self or message.is_auto)
+
+
+def _message_date(message: ChatMessage) -> date | None:
+    timestamp = message.timestamp or 0
+    if timestamp <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(timestamp).date()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _sender_key(message: ChatMessage) -> str:
+    """用稳定身份分组；没有身份信息时不要把所有未知消息合成一组。"""
+    if message.is_auto:
+        return f"auto:{message.sender_id or message.sender_name or 'AI'}"
+    if message.is_self:
+        return f"self:{message.sender_id or 'me'}"
+    identity = message.sender_id or message.sender_name
+    return identity or f"unknown:{id(message)}"
+
+
+def _group_key(message: ChatMessage) -> tuple[str, bool, date | None]:
+    return _sender_key(message), _message_is_self(message), _message_date(message)
+
+
+def _group_messages(messages: list[ChatMessage]) -> list[list[ChatMessage]]:
+    """按相邻发送者、方向和日期分组，日期变化会强制断组。"""
+    groups: list[list[ChatMessage]] = []
+    current: list[ChatMessage] = []
+    previous_key = None
+    for message in messages:
+        key = _group_key(message)
+        if current and key != previous_key:
+            groups.append(current)
+            current = []
+        current.append(message)
+        previous_key = key
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _avatar_cache_path(url: str) -> Path | None:
+    if not url:
+        return None
+    candidate = Path(url)
+    if candidate.exists() and candidate.is_file():
+        return candidate
+    project_root = Path(__file__).parents[3]
+    cached = project_root / "dmshoot" / "data" / "avatars" / f"{hashlib.md5(url.encode()).hexdigest()[:16]}.png"
+    return cached if cached.exists() else None
+
+
+class AvatarWidget(QWidget):
+    """36px 圆形头像；网络头像只读取已有本地缓存，不在聊天渲染时发请求。"""
+
+    def __init__(self, text: str = "?", avatar_url: str = "", parent=None):
         super().__init__(parent)
-        self._name_label = None
-        self._bubble_label = None
-        self._time_label = None
-        self._built = False
-        self._is_self = None
-        if message:
-            self.rebind(message)
+        self.setFixedSize(AVATAR_SIZE, AVATAR_SIZE)
+        self._text = (text or "?")[:2]
+        self._pixmap = QPixmap()
+        self.set_avatar(avatar_url)
 
-    def rebind(self, message: ChatMessage):
-        """复用时只更新文字+调色板，不触发 QSS 重解析"""
-        if not self._built:
-            self._init_ui()
-        is_self = message.is_self or message.is_auto
+    def set_avatar(self, avatar_url: str = ""):
+        path = _avatar_cache_path(avatar_url)
+        self._pixmap = QPixmap(str(path)) if path else QPixmap()
+        self.update()
 
-        name_text = message.sender_name or ("AI" if message.is_auto else "")
-        show_name = bool(name_text and not is_self)
-        self._name_label.setText(name_text if show_name else "")
-        self._name_label.setVisible(show_name)
+    def set_text(self, text: str):
+        self._text = (text or "?")[:2]
+        self.update()
 
-        self._bubble_label.setText(message.content)
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        rect = self.rect()
+        path = QPainterPath()
+        path.addEllipse(rect)
+        painter.setClipPath(path)
 
-        # 复用同方向气泡时无需重新解析样式和重建横向布局。
-        if is_self != self._is_self:
-            if is_self:
-                self._bubble_label.setStyleSheet(
-                    "QLabel#bubble {"
-                    "  background: rgba(255,150,50,0.18);"
-                    "  border: 1px solid rgba(255,150,50,0.15);"
-                    "  border-radius: 18px;"
-                    "  padding: 12px 16px;"
-                    "  font-size: 13px;"
-                    "  color: #FFE0A0;"
-                    "}"
-                )
-            else:
-                self._bubble_label.setStyleSheet(
-                    "QLabel#bubble {"
-                    "  background: rgba(255,255,255,0.07);"
-                    "  border: 1px solid rgba(255,255,255,0.10);"
-                    "  border-radius: 18px;"
-                    "  padding: 12px 16px;"
-                    "  font-size: 13px;"
-                    "  color: #E2E2ED;"
-                    "}"
-                )
+        if not self._pixmap.isNull():
+            pixmap = self._pixmap.scaled(
+                rect.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+            )
+            source_x = max(0, (pixmap.width() - rect.width()) // 2)
+            source_y = max(0, (pixmap.height() - rect.height()) // 2)
+            painter.drawPixmap(rect, pixmap, QRect(source_x, source_y, rect.width(), rect.height()))
+        else:
+            painter.fillPath(path, QColor("#394B63"))
+            painter.setPen(QColor(255, 255, 255, 220))
+            painter.setFont(QFont("Microsoft YaHei", 11, QFont.Weight.DemiBold))
+            painter.drawText(rect, Qt.AlignCenter, self._text)
+        painter.end()
 
-            while self._row.count():
-                self._row.takeAt(0)
-            if is_self:
-                self._row.addStretch(1)
-                self._row.addWidget(self._bubble_label)
-            else:
-                self._row.addWidget(self._bubble_label)
-                self._row.addStretch(1)
-            self._is_self = is_self
 
-        # 根据实际字体计算宽度（QSS 已生效）
-        fm = self._bubble_label.fontMetrics()
-        lines = message.content.split('\n')
-        max_chars = max((len(line) for line in lines), default=0)
-        char_w = fm.horizontalAdvance("中")
-        box_w = 34 + max_chars * char_w + 8  # padding + 文字 + 余量
-        target_w = int(min(max(box_w, 64), 600))
-        self._bubble_label.setFixedWidth(target_w)
+def _rounded_path(left: float, top: float, right: float, bottom: float,
+                  radii: tuple[int, int, int, int]) -> QPainterPath:
+    """绘制四角可独立控制的圆角矩形，顺序为左上、右上、右下、左下。"""
+    top_left, top_right, bottom_right, bottom_left = radii
+    width = max(0.0, right - left)
+    height = max(0.0, bottom - top)
+    max_radius = min(width, height) / 2
+    top_left = min(top_left, max_radius)
+    top_right = min(top_right, max_radius)
+    bottom_right = min(bottom_right, max_radius)
+    bottom_left = min(bottom_left, max_radius)
+    k = 0.5522848
 
-        ts = message.timestamp if message.timestamp is not None else 0.0
-        t = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts > 0 else ""
-        self._time_label.setText(t)
-        # 自写消息时间戳右对齐
-        self._time_label.setAlignment(Qt.AlignRight if is_self else Qt.AlignLeft)
+    path = QPainterPath()
+    path.moveTo(left + top_left, top)
+    path.lineTo(right - top_right, top)
+    path.cubicTo(
+        right - top_right + top_right * k, top,
+        right, top + top_right - top_right * k,
+        right, top + top_right,
+    )
+    path.lineTo(right, bottom - bottom_right)
+    path.cubicTo(
+        right, bottom - bottom_right + bottom_right * k,
+        right - bottom_right + bottom_right * k, bottom,
+        right - bottom_right, bottom,
+    )
+    path.lineTo(left + bottom_left, bottom)
+    path.cubicTo(
+        left + bottom_left - bottom_left * k, bottom,
+        left, bottom - bottom_left + bottom_left * k,
+        left, bottom - bottom_left,
+    )
+    path.lineTo(left, top + top_left)
+    path.cubicTo(
+        left, top + top_left - top_left * k,
+        left + top_left - top_left * k, top,
+        left + top_left, top,
+    )
+    path.closeSubpath()
+    return path
 
-    def _init_ui(self):
-        """首次创建 widget 树（只执行一次）"""
-        self._built = True
-        outer = QVBoxLayout()
-        outer.setContentsMargins(0, 4, 0, 4)
-        outer.setSpacing(2)
 
-        self._name_label = QLabel()
-        self._name_label.setStyleSheet(
-            "color: #4ADE80; font-size: 11px; padding-left: 14px; font-weight: 600;"
+class CheckLabel(QLabel):
+    """自绘 Telegram 双勾，避免 Windows 字体缺少勾形导致方框或裁切。"""
+
+    def __init__(self, parent=None):
+        super().__init__("✓✓", parent)
+        self.setObjectName("tgBubbleCheck")
+        self.setFixedSize(CHECK_WIDTH, 15)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(Qt.NoBrush)
+        pen_color = self.palette().color(self.foregroundRole())
+        if not pen_color.isValid() or pen_color.alpha() == 0:
+            pen_color = QColor(247, 244, 255)
+        pen = QPen(pen_color)
+        pen.setWidthF(1.25)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(pen)
+        for offset in (0, 5):
+            painter.drawLine(offset + 1, 7, offset + 4, 10)
+            painter.drawLine(offset + 4, 10, offset + 9, 3)
+        painter.end()
+
+
+class BubbleWidget(QFrame):
+    """一条 Telegram 气泡，时间戳嵌在正文右下角。"""
+
+    def __init__(
+        self,
+        message: ChatMessage = None,
+        position: str = "single",
+        parent=None,
+        content_family: str = "",
+        meta_family: str = "",
+    ):
+        super().__init__(parent)
+        self.setObjectName("tgBubble")
+        # 气泡按内容自然撑高；不能让组布局把短消息均分成大块空白。
+        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Maximum)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self._message = None
+        self._is_self = False
+        self._position = "single"
+        self._max_width = MAX_BUBBLE_WIDTH
+        self._radii = (BUBBLE_RADIUS,) * 4
+        self._tail_side = ""
+        self._natural_height = 0
+        self._content_family = content_family or BUBBLE_FONT_FAMILY
+        self._meta_family = meta_family or "Segoe UI"
+
+        self._content_font = QFont(self._content_family)
+        self._content_font.setPixelSize(BUBBLE_FONT_SIZE)
+        self._content_font.setWeight(QFont.Weight.Normal)
+        self._meta_font = QFont(self._meta_family)
+        self._meta_font.setPixelSize(META_FONT_SIZE)
+
+        self._content_label = QLabel()
+        self._content_label.setObjectName("tgBubbleText")
+        self._content_label.setFont(self._content_font)
+        self._content_label.setTextFormat(Qt.PlainText)
+        self._content_label.setWordWrap(True)
+        self._content_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._content_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+        self._meta_label = QLabel()
+        self._meta_label.setObjectName("tgBubbleMeta")
+        self._meta_label.setFont(self._meta_font)
+        self._meta_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
+        self._meta_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+
+        self._check_label = CheckLabel()
+        self._check_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
+        self._check_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self._check_label.hide()
+
+        self._meta_widget = QWidget()
+        self._meta_widget.setObjectName("tgBubbleMetaWidget")
+        meta_layout = QHBoxLayout(self._meta_widget)
+        meta_layout.setContentsMargins(0, 0, 0, 0)
+        meta_layout.setSpacing(META_ITEM_SPACING)
+        meta_layout.addWidget(self._meta_label, 0, Qt.AlignBottom)
+        meta_layout.addWidget(self._check_label, 0, Qt.AlignBottom)
+
+        self._row = QHBoxLayout(self)
+        self._row.setContentsMargins(
+            BUBBLE_PADDING_LEFT, BUBBLE_PADDING_TOP,
+            BUBBLE_PADDING_RIGHT, BUBBLE_PADDING_BOTTOM,
         )
-        self._name_label.hide()
-        outer.addWidget(self._name_label)
+        self._row.setSpacing(BUBBLE_META_SPACING)
+        self._row.addWidget(self._content_label, 0, Qt.AlignBottom)
+        self._row.addWidget(self._meta_widget, 0, Qt.AlignBottom)
 
-        self._row = QHBoxLayout()
-        self._row.setContentsMargins(12, 0, 12, 0)
-        self._bubble_label = QLabel()
-        self._bubble_label.setObjectName("bubble")
-        self._bubble_label.setWordWrap(True)
-        self._bubble_label.setMaximumWidth(600)
-        self._bubble_label.setMinimumWidth(60)
-        self._bubble_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
-        self._row.addWidget(self._bubble_label)  # 初始占位，rebind 时重新排列
-        outer.addLayout(self._row)
+        if message is not None:
+            self.rebind(message, position)
 
-        self._time_label = QLabel()
-        self._time_label.setStyleSheet("color: rgba(255,255,255,0.50); font-size: 10px;")
-        self._time_label.setContentsMargins(14, 0, 14, 0)
-        outer.addWidget(self._time_label)
+    def rebind(self, message: ChatMessage, position: str = "single"):
+        self._message = message
+        self._is_self = _message_is_self(message)
+        self._content_label.setText(message.content or "")
+        timestamp = message.timestamp or 0
+        try:
+            time_text = datetime.fromtimestamp(timestamp).strftime("%H:%M") if timestamp > 0 else ""
+        except (OverflowError, OSError, ValueError):
+            time_text = ""
+        self._meta_label.setText(time_text)
+        self._meta_label.setVisible(bool(time_text))
+        self._check_label.setVisible(self._is_self and bool(time_text))
+        self._check_label.setStyleSheet(
+            f"color: {OUTGOING_CHECK_COLOR}; background: transparent;"
+        )
+        self._meta_label.setFixedWidth(
+            QFontMetrics(self._meta_font).horizontalAdvance(time_text)
+            if time_text else 0
+        )
+        self._check_label.setFixedWidth(CHECK_WIDTH if self._is_self and time_text else 0)
+        self.set_position(position)
+        self._refresh_width()
 
-        self.setLayout(outer)
+    def set_font_families(self, content_family: str, meta_family: str):
+        """切换字体后重测气泡，避免新 family 沿用旧字宽。"""
+        self._content_family = content_family or BUBBLE_FONT_FAMILY
+        self._meta_family = meta_family or "Segoe UI"
+        self._content_font = QFont(self._content_family)
+        self._content_font.setPixelSize(BUBBLE_FONT_SIZE)
+        self._content_font.setWeight(QFont.Weight.Normal)
+        self._meta_font = QFont(self._meta_family)
+        self._meta_font.setPixelSize(META_FONT_SIZE)
+        self._content_label.setFont(self._content_font)
+        self._meta_label.setFont(self._meta_font)
+        meta_text = self._meta_label.text()
+        self._meta_label.setFixedWidth(
+            QFontMetrics(self._meta_font).horizontalAdvance(meta_text)
+            if meta_text else 0
+        )
+        self.set_position(self._position)
+        self._refresh_width()
+
+    def set_position(self, position: str):
+        self._position = position if position in {"single", "first", "middle", "last"} else "single"
+        # Telegram Web keeps the tail-opposite side round. Consecutive rows
+        # compact only the tail-side corners; the final row then adds a tail.
+        self._radii = (BUBBLE_RADIUS,) * 4
+        if self._position == "first":
+            self._radii = (
+                (BUBBLE_RADIUS, BUBBLE_RADIUS, SEAM_RADIUS, BUBBLE_RADIUS)
+                if self._is_self
+                else (BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_RADIUS, SEAM_RADIUS)
+            )
+        elif self._position in {"middle", "last"}:
+            self._radii = (
+                (BUBBLE_RADIUS, SEAM_RADIUS, SEAM_RADIUS, BUBBLE_RADIUS)
+                if self._is_self
+                else (SEAM_RADIUS, BUBBLE_RADIUS, BUBBLE_RADIUS, SEAM_RADIUS)
+            )
+        self._tail_side = ""
+        if self._position in {"single", "last"}:
+            self._tail_side = "right" if self._is_self else "left"
+
+        tail_left = BUBBLE_TAIL_WIDTH if self._tail_side == "left" else 0
+        tail_right = BUBBLE_TAIL_WIDTH if self._tail_side == "right" else 0
+        self._row.setContentsMargins(
+            BUBBLE_PADDING_LEFT + tail_left, BUBBLE_PADDING_TOP,
+            BUBBLE_PADDING_RIGHT + tail_right, BUBBLE_PADDING_BOTTOM,
+        )
+
+        text_color = "#FFFFFF"
+        meta_color = OUTGOING_META_COLOR if self._is_self else INCOMING_META_COLOR
+        # 保留 radius 信息供调试和旧测试读取；实际轮廓由 paintEvent 绘制，
+        # 因此尾巴不会被 QSS 的矩形裁掉。
+        top_left, top_right, bottom_right, bottom_left = self._radii
+        self.setStyleSheet(
+            "QFrame#tgBubble { background: transparent; border: none;"
+            f" border-top-left-radius: {top_left}px;"
+            f" border-top-right-radius: {top_right}px;"
+            f" border-bottom-right-radius: {bottom_right}px;"
+            f" border-bottom-left-radius: {bottom_left}px; }}"
+            f"QLabel#tgBubbleText {{ color: {text_color}; background: transparent;"
+            f' font-family: "{self._content_family}"; font-size: {BUBBLE_FONT_SIZE}px; font-weight: 400; }}'
+            f'QLabel#tgBubbleMeta {{ color: {meta_color}; background: transparent;'
+            f' font-family: "{self._meta_family}"; font-size: {META_FONT_SIZE}px; }}'
+            f'QLabel#tgBubbleCheck {{ color: {OUTGOING_CHECK_COLOR}; background: transparent; }}'
+        )
+        self.update()
+
+    def set_max_width(self, width: int):
+        self._max_width = max(140, min(MAX_BUBBLE_WIDTH, int(width)))
+        self._refresh_width()
+
+    def _refresh_width(self):
+        if self._message is None:
+            return
+        # 用实际显示字体测量。元信息先占位，再决定正文是否换行，
+        # 这样长消息不会把时间或双勾挤进正文。
+        metrics = QFontMetrics(self._content_font)
+        text = self._message.content or ""
+        longest_line = max((metrics.horizontalAdvance(line) for line in text.split("\n")), default=0)
+        has_meta = bool(self._meta_label.text())
+        has_check = self._is_self and has_meta
+        meta_width = 0
+        if has_meta:
+            meta_width = QFontMetrics(self._meta_font).horizontalAdvance(self._meta_label.text())
+        check_width = CHECK_WIDTH if has_check else 0
+        meta_total = meta_width + (META_ITEM_SPACING + check_width if check_width else 0)
+        margins = self._row.contentsMargins()
+        horizontal = margins.left() + margins.right()
+        desired = horizontal + longest_line + (BUBBLE_META_SPACING if meta_total else 0) + meta_total
+        width = max(72, min(self._max_width, desired))
+
+        content_width = max(
+            1,
+            width - horizontal
+            - (BUBBLE_META_SPACING if meta_total else 0)
+            - meta_total,
+        )
+        wrapped = "\n" in text or desired >= self._max_width
+        if not wrapped:
+            content_width = max(1, longest_line)
+        self._content_label.setWordWrap(wrapped)
+        self._content_label.setFixedWidth(content_width)
+        measured_height = self._content_label.heightForWidth(content_width)
+        if measured_height <= 0:
+            line_count = max(1, len(text.split("\n")))
+            measured_height = metrics.lineSpacing() * line_count
+        content_height = max(metrics.height(), measured_height)
+        self._content_label.setFixedHeight(content_height)
+        self._meta_widget.setFixedWidth(meta_total)
+        self._meta_widget.setFixedHeight(max(
+            self._meta_label.sizeHint().height() if has_meta else 0,
+            self._check_label.height() if has_check else 0,
+        ))
+        self._natural_height = max(
+            BUBBLE_MIN_HEIGHT,
+            margins.top() + margins.bottom() + max(
+                content_height,
+                self._meta_label.sizeHint().height() if has_meta else 0,
+            ),
+        )
+        self.setFixedWidth(width)
+        self.setFixedHeight(self._natural_height)
+        self.updateGeometry()
+
+    def sizeHint(self):
+        if self._message is not None and self._natural_height:
+            return QSize(self.width(), self._natural_height)
+        return super().sizeHint()
+
+    def minimumSizeHint(self):
+        if self._message is not None and self._natural_height:
+            return QSize(self.width(), self._natural_height)
+        return super().minimumSizeHint()
+
+    def _bubble_path(self) -> QPainterPath:
+        """绘制连续外轮廓，尾巴与主体共用边界，不产生黑色接缝。"""
+        width = float(self.width())
+        height = float(self.height())
+        if self._tail_side == "right":
+            body_right = max(0.0, width - BUBBLE_TAIL_WIDTH)
+            top_left, top_right, _, bottom_left = self._radii
+            path = QPainterPath()
+            path.moveTo(top_left, 0)
+            path.lineTo(body_right - top_right, 0)
+            path.cubicTo(
+                body_right - top_right + top_right * 0.5522848, 0,
+                body_right, top_right - top_right * 0.5522848,
+                body_right, top_right,
+            )
+            path.lineTo(body_right, max(top_right, height - BUBBLE_TAIL_HEIGHT))
+            path.cubicTo(
+                body_right + 1, height - 4,
+                body_right + 4, height - 1,
+                width, height,
+            )
+            path.lineTo(max(0.0, body_right - 8), height)
+            path.lineTo(bottom_left, height)
+            path.cubicTo(
+                bottom_left - bottom_left * 0.5522848, height,
+                0, height - bottom_left + bottom_left * 0.5522848,
+                0, height - bottom_left,
+            )
+            path.lineTo(0, top_left)
+            path.cubicTo(
+                0, top_left - top_left * 0.5522848,
+                top_left - top_left * 0.5522848, 0,
+                top_left, 0,
+            )
+            path.closeSubpath()
+            return path
+        if self._tail_side == "left":
+            body_left = min(width, float(BUBBLE_TAIL_WIDTH))
+            top_left, top_right, bottom_right, _ = self._radii
+            path = QPainterPath()
+            path.moveTo(body_left + top_left, 0)
+            path.lineTo(width - top_right, 0)
+            path.cubicTo(
+                width - top_right + top_right * 0.5522848, 0,
+                width, top_right - top_right * 0.5522848,
+                width, top_right,
+            )
+            path.lineTo(width, height - bottom_right)
+            path.cubicTo(
+                width, height - bottom_right + bottom_right * 0.5522848,
+                width - bottom_right + bottom_right * 0.5522848, height,
+                width - bottom_right, height,
+            )
+            path.lineTo(body_left + 8, height)
+            path.cubicTo(
+                body_left + 4, height - 1,
+                body_left + 1, height - 4,
+                0, height,
+            )
+            path.lineTo(body_left, max(top_left, height - BUBBLE_TAIL_HEIGHT))
+            path.lineTo(body_left, top_left)
+            path.cubicTo(
+                body_left, top_left - top_left * 0.5522848,
+                body_left + top_left - top_left * 0.5522848, 0,
+                body_left + top_left, 0,
+            )
+            path.closeSubpath()
+            return path
+        return _rounded_path(0, 0, width, height, self._radii)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(Qt.NoPen)
+        if self._is_self:
+            painter.setBrush(QColor(OUTGOING_BUBBLE_COLOR))
+        else:
+            painter.setBrush(QColor(INCOMING_BUBBLE_COLOR))
+        painter.drawPath(self._bubble_path())
+        painter.end()
+
+
+class BubbleRowWidget(QWidget):
+    """让组尾的尾巴向外伸，而不是挤掉同组消息的对齐边。"""
+
+    def __init__(self, bubble: BubbleWidget, is_self: bool, parent=None):
+        super().__init__(parent)
+        self.bubble = bubble
+        self._tail_gutter = BUBBLE_TAIL_WIDTH if not bubble._tail_side else 0
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        if is_self:
+            layout.addStretch(1)
+            layout.addWidget(bubble, 0, Qt.AlignRight)
+            if self._tail_gutter:
+                layout.addSpacing(self._tail_gutter)
+        else:
+            if self._tail_gutter:
+                layout.addSpacing(self._tail_gutter)
+            layout.addWidget(bubble, 0, Qt.AlignLeft)
+            layout.addStretch(1)
+        self.sync_height()
+
+    @property
+    def tail_gutter(self) -> int:
+        return self._tail_gutter
+
+    def sync_height(self):
+        height = max(1, self.bubble.height())
+        if self.height() != height:
+            self.setFixedHeight(height)
+        self.updateGeometry()
+
+
+class MessageGroupWidget(QWidget):
+    """一个发送者在同一天连续发送的消息组，头像独立于消息栈滚动。"""
+
+    def __init__(self, messages: list[ChatMessage], peer_avatar_url: str = "", parent=None):
+        super().__init__(parent)
+        # 组只在横向填满聊天区，纵向保持气泡栈的自然高度，避免和底部 stretch 平分空白。
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self._messages: list[ChatMessage] = []
+        self._group_key = None
+        self._peer_avatar_url = peer_avatar_url
+        self._bubble_rows: list[BubbleRowWidget] = []
+        self._sender_labels: list[QLabel] = []
+        self._content_family = "Microsoft YaHei"
+        self._meta_family = "Segoe UI"
+
+        self.avatar_slot = QWidget(self)
+        self.avatar_slot.setFixedWidth(AVATAR_SLOT_WIDTH)
+        self.avatar_slot.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self.avatar = AvatarWidget(parent=self.avatar_slot)
+
+        self.stack = QVBoxLayout()
+        self.stack.setContentsMargins(0, 0, 0, 0)
+        self.stack.setSpacing(MESSAGE_SEAM)
+
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(0)
+
+        self.rebind(messages, peer_avatar_url)
+
+    @property
+    def group_key(self):
+        return self._group_key
+
+    @property
+    def is_self(self) -> bool:
+        return bool(self._messages and _message_is_self(self._messages[0]))
+
+    @property
+    def last_date(self) -> date | None:
+        return _message_date(self._messages[-1]) if self._messages else None
+
+    def can_append(self, message: ChatMessage) -> bool:
+        return bool(self._messages and _group_key(message) == self._group_key)
+
+    def rebind(self, messages: list[ChatMessage], peer_avatar_url: str = ""):
+        self.setMinimumHeight(0)
+        self._messages = list(messages)
+        self._peer_avatar_url = peer_avatar_url or self._peer_avatar_url
+        self._group_key = _group_key(self._messages[0]) if self._messages else None
+        self._clear_stack()
+
+        if not self._messages:
+            return
+        first = self._messages[0]
+        is_self = _message_is_self(first)
+        sender_name = first.sender_name or ("AI" if first.is_auto else "")
+        avatar_text = ("AI" if first.is_auto else "我") if is_self else (sender_name or "?")
+        self.avatar.set_text(avatar_text)
+        self.avatar.set_avatar("" if is_self else self._peer_avatar_url)
+
+        if not is_self and sender_name:
+            name_label = QLabel(sender_name)
+            name_label.setObjectName("tgSenderName")
+            name_label.setFont(QFont(self._content_family, 13, QFont.Weight.DemiBold))
+            self._sender_labels.append(name_label)
+            self.stack.addWidget(name_label, 0, Qt.AlignLeft)
+
+        for index, message in enumerate(self._messages):
+            if len(self._messages) == 1:
+                position = "single"
+            elif index == 0:
+                position = "first"
+            elif index == len(self._messages) - 1:
+                position = "last"
+            else:
+                position = "middle"
+            bubble = BubbleWidget(
+                message,
+                position,
+                content_family=self._content_family,
+                meta_family=self._meta_family,
+            )
+            row = BubbleRowWidget(bubble, is_self, self)
+            self._bubble_rows.append(row)
+            self.stack.addWidget(row)
+
+        if is_self:
+            self._layout.addLayout(self.stack, 1)
+            self._layout.addWidget(self.avatar_slot, 0)
+        else:
+            self._layout.addWidget(self.avatar_slot, 0)
+            self._layout.addLayout(self.stack, 1)
+        self._refresh_minimum_height()
+        self._refresh_avatar_position()
+
+    def append_message(self, message: ChatMessage):
+        if not self.can_append(message):
+            return False
+        self._messages.append(message)
+        self.rebind(self._messages, self._peer_avatar_url)
+        return True
+
+    def set_max_width(self, width: int):
+        for row in self._bubble_rows:
+            row.bubble.set_max_width(width)
+            row.sync_height()
+        self._refresh_minimum_height()
+        self.updateGeometry()
+
+    def set_font_families(self, content_family: str, meta_family: str):
+        """把聊天组内的正文、元信息和发送者名统一切换到同一模式。"""
+        self._content_family = content_family or "Microsoft YaHei"
+        self._meta_family = meta_family or "Segoe UI"
+        for row in self._bubble_rows:
+            row.bubble.set_font_families(self._content_family, self._meta_family)
+        for label in self._sender_labels:
+            label.setFont(QFont(self._content_family, 13, QFont.Weight.DemiBold))
+        self._refresh_minimum_height()
+        self.updateGeometry()
+
+    def refresh_layout(self):
+        """在子气泡完成字体/宽度计算后同步组的自然高度。"""
+        self._refresh_minimum_height()
+        self.updateGeometry()
+
+    def _refresh_minimum_height(self):
+        for row in self._bubble_rows:
+            row.sync_height()
+        self.stack.invalidate()
+        self._layout.invalidate()
+        natural_height = self.stack.sizeHint().height()
+        self.setMinimumHeight(max(AVATAR_SIZE, natural_height))
+
+    def _clear_stack(self):
+        self._bubble_rows.clear()
+        self._sender_labels.clear()
+        while self.stack.count():
+            item = self.stack.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        while self._layout.count():
+            self._layout.takeAt(0)
+
+    def _refresh_avatar_position(self):
+        slot_height = max(0, self.avatar_slot.height())
+        y = max(0, slot_height - AVATAR_SIZE)
+        self.avatar.move((AVATAR_SLOT_WIDTH - AVATAR_SIZE) // 2, y)
+
+    def update_avatar_position(self, scroll_top: int, viewport_height: int):
+        group_top = self.y()
+        max_offset = max(0, self.height() - AVATAR_SIZE)
+        stick_vp = viewport_height - AVATAR_SIZE - AVATAR_STICK_BOTTOM
+        target = scroll_top + stick_vp - group_top
+        y = max(0, min(target, max_offset))
+        self.avatar.move((AVATAR_SLOT_WIDTH - AVATAR_SIZE) // 2, y)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh_avatar_position()
+
+
+class DateSeparatorWidget(QFrame):
+    """日期变化时的居中胶囊，同时切断消息分组。"""
+
+    def __init__(self, day: date, parent=None, font_family: str = "Microsoft YaHei"):
+        super().__init__(parent)
+        self.setObjectName("tgDateSeparator")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 8)
+        label = QLabel(f"{day.year}年{day.month}月{day.day}日")
+        label.setObjectName("tgDateText")
+        label.setFont(QFont(font_family, 12))
+        label.setAlignment(Qt.AlignCenter)
+        layout.addStretch(1)
+        layout.addWidget(label, 0, Qt.AlignCenter)
+        layout.addStretch(1)
+
+    def set_font_family(self, font_family: str):
+        for index in range(self.layout().count()):
+            widget = self.layout().itemAt(index).widget()
+            if isinstance(widget, QLabel):
+                widget.setFont(QFont(font_family or "Microsoft YaHei", 12))
+
 
 class ChatView(QWidget):
-    def __init__(self):
+    def __init__(self, font_manager=None):
         super().__init__()
+        self._font_manager = font_manager
+        self._font_mode = getattr(font_manager, "current_mode", "system")
+        if font_manager is not None:
+            self._content_family, self._meta_family = font_manager.chat_families(self._font_mode)
+        else:
+            self._content_family, self._meta_family = "Microsoft YaHei", "Segoe UI"
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -139,9 +770,10 @@ class ChatView(QWidget):
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         self.bubble_container = QWidget()
+        self.bubble_container.setObjectName("chatBubbleContainer")
         self.bubble_layout = QVBoxLayout()
         self.bubble_layout.setContentsMargins(8, 8, 8, 8)
-        self.bubble_layout.setSpacing(2)
+        self.bubble_layout.setSpacing(GROUP_SPACING)
         self.bubble_layout.addStretch()
         self.bubble_container.setLayout(self.bubble_layout)
 
@@ -149,7 +781,13 @@ class ChatView(QWidget):
         layout.addWidget(self.scroll, stretch=1)
         self.setLayout(layout)
 
+        self._conversation_id = ""
+        self._peer_avatar_url = ""
+        self._content_items: list[QWidget] = []
+        self._display_messages: list[ChatMessage] = []
         self._new_message_count = 0
+        self._placeholder = None
+        self._md_browser = None
         self._new_message_button = QPushButton(self.scroll.viewport())
         self._new_message_button.setObjectName("newMessagesButton")
         self._new_message_button.setFixedSize(132, 32)
@@ -160,7 +798,6 @@ class ChatView(QWidget):
         self.scroll.viewport().installEventFilter(self)
         self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll_value_changed)
 
-        # 消息批量到达时只保留一个滚动请求。
         self._scroll_timer = QTimer(self)
         self._scroll_timer.setSingleShot(True)
         self._scroll_timer.timeout.connect(self._smart_scroll)
@@ -169,9 +806,32 @@ class ChatView(QWidget):
         self._history_timer = QTimer(self)
         self._history_timer.setInterval(30)
         self._history_timer.timeout.connect(self._load_history_chunk)
+        self._group_refresh_timer = QTimer(self)
+        self._group_refresh_timer.setSingleShot(True)
+        self._group_refresh_timer.timeout.connect(self._refresh_group_heights)
+
+    def set_conversation(self, conversation_id: str, peer_avatar_url: str = ""):
+        self._conversation_id = conversation_id or ""
+        self._peer_avatar_url = peer_avatar_url or ""
+
+    def set_font_mode(self, mode: str):
+        """切换聊天字体并重新测量已显示的气泡。"""
+        self._font_mode = mode
+        if self._font_manager is not None:
+            self._content_family, self._meta_family = self._font_manager.chat_families(mode)
+        else:
+            self._content_family, self._meta_family = "Microsoft YaHei", "Segoe UI"
+        for item in self._content_items:
+            if isinstance(item, MessageGroupWidget):
+                item.set_font_families(self._content_family, self._meta_family)
+            elif isinstance(item, DateSeparatorWidget):
+                item.set_font_family(self._content_family)
+        self._update_bubble_widths()
+        self._refresh_group_heights()
+        self._update_avatar_positions()
 
     def show_placeholder(self, text: str):
-        """显示空状态引导文字"""
+        """显示空状态引导文字。"""
         self.title_label.setText("")
         self._clear_content()
         self._placeholder = QLabel(text)
@@ -180,27 +840,27 @@ class ChatView(QWidget):
         self._placeholder.setStyleSheet(
             "color: rgba(255,255,255,0.35); font-size: 14px; padding: 40px;"
         )
-        self.bubble_layout.insertWidget(
-            self.bubble_layout.count() - 1, self._placeholder
-        )
+        self.bubble_layout.insertWidget(self.bubble_layout.count() - 1, self._placeholder)
 
     def _clear_content(self):
-        """清除所有气泡 / Markdown 浏览器 / 占位文字"""
+        """清除所有消息、Markdown 和占位内容。"""
         self._reset_new_message_notice()
         self._history_timer.stop()
         self._history_pending.clear()
+        self._display_messages.clear()
+        self._content_items.clear()
         while self.bubble_layout.count():
             item = self.bubble_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
         self._placeholder = None
         self._md_browser = None
         self.bubble_layout.addStretch()
 
     _MD_CSS = """
         body {
-            font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif;
+            font-family: "CHAT_FONT_FAMILY", "Microsoft YaHei", "Segoe UI", sans-serif;
             line-height: 1.8; background: transparent; color: #cdd6f4;
             padding: 16px 20px; margin: 0;
         }
@@ -225,10 +885,9 @@ class ChatView(QWidget):
     """
 
     def show_markdown(self, md_path: str, title: str = ""):
-        """渲染 Markdown 格式的逆向日志全文，替代空白聊天区域"""
+        """渲染 Markdown，替代空白聊天区域。"""
         self.title_label.setText(title)
         self._clear_content()
-        # 移除末尾 stretch，让浏览器独占空间。
         self.bubble_layout.takeAt(self.bubble_layout.count() - 1)
         self._md_browser = QTextBrowser()
         self._md_browser.setOpenExternalLinks(True)
@@ -248,119 +907,186 @@ class ChatView(QWidget):
             html_body = markdown.markdown(
                 md_content, extensions=["tables", "fenced_code", "codehilite", "nl2br"],
             )
-            full_html = (
-                f"<html><head><style>{self._MD_CSS}</style></head>"
-                f"<body>{html_body}</body></html>"
-            )
+            safe_family = self._content_family.replace('"', "")
+            md_css = self._MD_CSS.replace("CHAT_FONT_FAMILY", safe_family)
+            full_html = f"<html><head><style>{md_css}</style></head><body>{html_body}</body></html>"
             self._md_browser.setHtml(full_html)
         except Exception as e:
             self._md_browser.setPlainText(f"无法加载日志：{e}")
         self.bubble_layout.addWidget(self._md_browser, stretch=1)
 
     def clear_markdown(self):
-        """清除 Markdown 视图，恢复通讯录/气泡模式"""
-        if hasattr(self, '_md_browser') and self._md_browser:
-            self._md_browser.deleteLater()
-            self._md_browser = None
+        """清除 Markdown 视图，恢复消息模式。"""
         self.title_label.setText("选择会话")
         self._clear_content()
 
-    MAX_VISIBLE = 50  # 最多显示条数，防止长会话内存膨胀
+    MAX_VISIBLE = 50
     MAX_READING_BUFFER = 20
     INITIAL_VISIBLE = 12
     HISTORY_CHUNK = 4
 
-    def load_messages(self, title: str, messages: list[ChatMessage]):
-        """增量加载 — 复用已有气泡，只更新内容"""
+    def load_messages(self, title: str, messages: list[ChatMessage], peer_avatar_url: str = ""):
+        """加载消息；初始只渲染末尾一小段，历史按组逐批补齐。"""
         self._reset_new_message_notice()
         self.title_label.setText(title)
-        # 清除 Markdown 视图和占位文字
-        if ((hasattr(self, '_md_browser') and self._md_browser) or
-                (hasattr(self, '_placeholder') and self._placeholder)):
+        if peer_avatar_url:
+            self._peer_avatar_url = peer_avatar_url
+        if self._md_browser or self._placeholder:
             self._clear_content()
         self._history_timer.stop()
         self._history_pending.clear()
-        messages = messages[-self.MAX_VISIBLE:]
-        initial = messages[-self.INITIAL_VISIBLE:]
-        self._history_pending = list(messages[:-self.INITIAL_VISIBLE])
-        # 收集已有气泡
-        existing = []
-        for i in range(self.bubble_layout.count() - 1):  # skip stretch
-            w = self.bubble_layout.itemAt(i).widget()
-            if isinstance(w, BubbleWidget):
-                existing.append(w)
 
-        # 更新/新增
-        for i, msg in enumerate(initial):
-            if i < len(existing):
-                existing[i].rebind(msg)
-            else:
-                self.bubble_layout.insertWidget(i, BubbleWidget(msg))
-
-        # 删除多余的
-        for w in existing[len(initial):]:
-            self.bubble_layout.removeWidget(w)
-            w.deleteLater()
-
+        all_messages = list(messages[-self.MAX_VISIBLE:])
+        initial = all_messages[-self.INITIAL_VISIBLE:]
+        self._display_messages = list(initial)
+        self._history_pending = list(all_messages[:-self.INITIAL_VISIBLE])
+        self._render_message_items(initial)
         self._schedule_scroll(120, force=True)
         if self._history_pending:
             self._history_timer.start()
+
+    def _render_message_items(self, messages: list[ChatMessage], preserve_scroll: bool = False):
+        """按消息组重排；重排时尽量复用同位置、同身份的组控件。"""
+        scrollbar = self.scroll.verticalScrollBar()
+        old_value = scrollbar.value()
+        old_maximum = scrollbar.maximum()
+        old_items = list(self._content_items)
+        target_items: list[QWidget] = []
+        old_index = 0
+        previous_day = None
+
+        for group_messages in _group_messages(messages):
+            day = _message_date(group_messages[0])
+            # 首条消息不需要日期胶囊；只有相邻消息跨天时才插入。
+            if previous_day is not None and day is not None and day != previous_day:
+                old = old_items[old_index] if old_index < len(old_items) else None
+                if isinstance(old, DateSeparatorWidget):
+                    separator = old
+                    old_index += 1
+                else:
+                    separator = DateSeparatorWidget(
+                        day, self.bubble_container, self._content_family
+                    )
+                target_items.append(separator)
+            previous_day = day
+
+            old = old_items[old_index] if old_index < len(old_items) else None
+            group_key = _group_key(group_messages[0])
+            if isinstance(old, MessageGroupWidget) and old.group_key == group_key:
+                group = old
+                group.rebind(group_messages, self._peer_avatar_url)
+                old_index += 1
+            else:
+                group = MessageGroupWidget(
+                    group_messages,
+                    self._peer_avatar_url,
+                    self.bubble_container,
+                )
+                group.set_font_families(self._content_family, self._meta_family)
+            target_items.append(group)
+
+        reused = set(target_items)
+        for old in old_items:
+            if old not in reused:
+                old.deleteLater()
+
+        while self.bubble_layout.count():
+            item = self.bubble_layout.takeAt(0)
+            widget = item.widget()
+            if widget and widget not in reused:
+                widget.deleteLater()
+        for widget in target_items:
+            self.bubble_layout.addWidget(widget, 0, Qt.AlignTop)
+        self.bubble_layout.addStretch()
+        self._content_items = target_items
+        self._update_bubble_widths()
+
+        def restore_position():
+            if preserve_scroll:
+                scrollbar.setValue(old_value + max(0, scrollbar.maximum() - old_maximum))
+            self._update_avatar_positions()
+
+        QTimer.singleShot(0, restore_position)
 
     def _load_history_chunk(self):
         if not self._history_pending:
             self._history_timer.stop()
             return
-        sb = self.scroll.verticalScrollBar()
-        was_at_bottom = sb.value() >= sb.maximum() - 60
+        scrollbar = self.scroll.verticalScrollBar()
+        was_at_bottom = self._is_near_bottom()
+        old_value = scrollbar.value()
+        old_maximum = scrollbar.maximum()
         chunk = self._history_pending[-self.HISTORY_CHUNK:]
         del self._history_pending[-len(chunk):]
-        for msg in reversed(chunk):
-            self.bubble_layout.insertWidget(0, BubbleWidget(msg))
-        self._schedule_scroll(30, force=was_at_bottom)
+        self._display_messages = chunk + self._display_messages
+        self._render_message_items(self._display_messages, preserve_scroll=not was_at_bottom)
+
+        def keep_position():
+            if was_at_bottom:
+                scrollbar.setValue(scrollbar.maximum())
+            else:
+                scrollbar.setValue(old_value + max(0, scrollbar.maximum() - old_maximum))
+            self._update_avatar_positions()
+
+        QTimer.singleShot(0, keep_position)
 
     def append_message(self, message: ChatMessage):
-        sb = self.scroll.verticalScrollBar()
         was_at_bottom = self._is_near_bottom()
-        # 保持上限：超出时删除最旧的气泡
-        bubble_count = self._bubble_count()
         if self._history_pending:
             self._history_pending.pop(0)
-        elif ((was_at_bottom and bubble_count >= self.MAX_VISIBLE)
-              or bubble_count >= self.MAX_VISIBLE + self.MAX_READING_BUFFER):
-            self._remove_oldest_bubble()
-        bubble = BubbleWidget(message)
-        self.bubble_layout.insertWidget(
-            self.bubble_layout.count() - 1, bubble
-        )
+        elif ((was_at_bottom and len(self._display_messages) >= self.MAX_VISIBLE)
+              or len(self._display_messages) >= self.MAX_VISIBLE + self.MAX_READING_BUFFER):
+            self._display_messages.pop(0)
+            self._render_message_items(self._display_messages, preserve_scroll=not was_at_bottom)
+
+        self._display_messages.append(message)
+        if self._content_items:
+            last = self._content_items[-1]
+            if isinstance(last, MessageGroupWidget) and last.can_append(message):
+                last.append_message(message)
+            else:
+                previous_day = _message_date(self._display_messages[-2]) if len(self._display_messages) > 1 else None
+                current_day = _message_date(message)
+                if current_day is not None and current_day != previous_day:
+                    separator = DateSeparatorWidget(
+                        current_day, self.bubble_container, self._content_family
+                    )
+                    self.bubble_layout.insertWidget(
+                        self.bubble_layout.count() - 1, separator, 0, Qt.AlignTop
+                    )
+                    self._content_items.append(separator)
+                group = MessageGroupWidget(
+                    [message], self._peer_avatar_url, self.bubble_container
+                )
+                group.set_font_families(self._content_family, self._meta_family)
+                self.bubble_layout.insertWidget(
+                    self.bubble_layout.count() - 1, group, 0, Qt.AlignTop
+                )
+                self._content_items.append(group)
+            self._update_bubble_widths()
+        else:
+            self._render_message_items(self._display_messages)
+
         if was_at_bottom:
             self._schedule_scroll(60, force=True)
         else:
             self._new_message_count += 1
             self._update_new_message_notice()
+        QTimer.singleShot(0, self._update_avatar_positions)
 
     def _bubble_count(self):
-        return sum(
-            1 for i in range(self.bubble_layout.count() - 1)
-            if isinstance(self.bubble_layout.itemAt(i).widget(), BubbleWidget)
-        )
-
-    def _remove_oldest_bubble(self):
-        for i in range(self.bubble_layout.count() - 1):
-            widget = self.bubble_layout.itemAt(i).widget()
-            if isinstance(widget, BubbleWidget):
-                self.bubble_layout.removeWidget(widget)
-                widget.deleteLater()
-                return True
-        return False
+        """兼容旧调用方：现在返回消息数，而不是组控件数。"""
+        return len(self._display_messages)
 
     def _trim_bubbles(self):
-        while self._bubble_count() > self.MAX_VISIBLE:
-            if not self._remove_oldest_bubble():
-                break
+        if len(self._display_messages) <= self.MAX_VISIBLE:
+            return
+        self._display_messages = self._display_messages[-self.MAX_VISIBLE:]
+        self._render_message_items(self._display_messages, preserve_scroll=False)
 
     def _is_near_bottom(self):
-        sb = self.scroll.verticalScrollBar()
-        return sb.value() >= sb.maximum() - 60
+        scrollbar = self.scroll.verticalScrollBar()
+        return scrollbar.value() >= scrollbar.maximum() - 60
 
     def _update_new_message_notice(self):
         count = "99+" if self._new_message_count > 99 else str(self._new_message_count)
@@ -380,10 +1106,35 @@ class ChatView(QWidget):
         self._schedule_scroll(0, force=True)
 
     def _on_scroll_value_changed(self, _value):
+        self._update_avatar_positions()
         if self._new_message_count and self._is_near_bottom():
             self._trim_bubbles()
             self._reset_new_message_notice()
             self._schedule_scroll(0, force=True)
+
+    def _update_bubble_widths(self):
+        viewport_width = self.scroll.viewport().width()
+        max_width = min(MAX_BUBBLE_WIDTH, max(140, int(viewport_width * 0.65)))
+        for item in self._content_items:
+            if isinstance(item, MessageGroupWidget):
+                item.set_max_width(max_width)
+        if not self._group_refresh_timer.isActive():
+            self._group_refresh_timer.start(0)
+
+    def _refresh_group_heights(self):
+        for item in self._content_items:
+            if isinstance(item, MessageGroupWidget):
+                item.refresh_layout()
+        self.bubble_layout.invalidate()
+        self.bubble_layout.activate()
+        self.bubble_container.updateGeometry()
+
+    def _update_avatar_positions(self):
+        viewport = self.scroll.viewport()
+        scroll_top = self.scroll.verticalScrollBar().value()
+        for item in self._content_items:
+            if isinstance(item, MessageGroupWidget):
+                item.update_avatar_position(scroll_top, viewport.height())
 
     def _position_new_message_button(self):
         viewport = self.scroll.viewport()
@@ -395,7 +1146,14 @@ class ChatView(QWidget):
     def eventFilter(self, watched, event):
         if watched is self.scroll.viewport() and event.type() in (QEvent.Resize, QEvent.Show):
             self._position_new_message_button()
+            self._update_bubble_widths()
+            QTimer.singleShot(0, self._update_avatar_positions)
         return super().eventFilter(watched, event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_bubble_widths()
+        QTimer.singleShot(0, self._update_avatar_positions)
 
     def _schedule_scroll(self, delay: int = 60, force: bool = False):
         """合并短时间内的滚动请求，消息洪峰时只重排一次。"""
@@ -404,8 +1162,9 @@ class ChatView(QWidget):
             self._scroll_timer.start(delay)
 
     def _smart_scroll(self):
-        sb = self.scroll.verticalScrollBar()
-        if self._scroll_force or sb.value() >= sb.maximum() - 60:
-            sb.setValue(sb.maximum())
+        scrollbar = self.scroll.verticalScrollBar()
+        if self._scroll_force or scrollbar.value() >= scrollbar.maximum() - 60:
+            scrollbar.setValue(scrollbar.maximum())
             self._reset_new_message_notice()
         self._scroll_force = False
+        self._update_avatar_positions()

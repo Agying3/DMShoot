@@ -37,6 +37,7 @@ from dmshoot.gui.auth_controller import AuthController
 from dmshoot.gui.signal_wiring import SignalWiring
 from dmshoot.gui.workers.ai_worker import AIWorker, ActiveAIWorker
 from dmshoot.gui.widgets.toast import show_toast
+from dmshoot.gui.font_manager import FontManager
 
 logger = get_logger(__name__)
 
@@ -408,6 +409,7 @@ class MainWindow(QMainWindow):
         self._settings_loading = False
         self._settings_open_requested = False
         self._settings_dialog = None
+        self.font_manager = None
         self.plugins = PluginManager()
 
         self.setWindowFlags(Qt.FramelessWindowHint)
@@ -419,6 +421,8 @@ class MainWindow(QMainWindow):
         self._load_style()
         database.init_database()
         self.config = database.load_config()
+        self.font_manager = FontManager.instance(FontManager.resolve_font_dir())
+        self.config.font_mode = self.font_manager.apply(self.config.font_mode)
         logger.info("DMShoot 启动中...")
         self._init_ai()
         logger.info("_init_ai 完成")
@@ -506,7 +510,7 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         plt = [(p.id, p.name) for p in self.plugins.list()]
         logger.info(f"_build_content: HomePage with {plt}")
-        self.page_home = HomePage(self.monitor, plt)
+        self.page_home = HomePage(self.monitor, plt, font_manager=self.font_manager)
         self.page_login = LoginPage()
         self.page_deepseek = DeepSeekPage()
         self.page_prompt = PromptPage()
@@ -591,9 +595,10 @@ class MainWindow(QMainWindow):
             self._show_settings()
 
     def _show_settings(self):
-        dialog = self._settings_class(self.config, self)
+        dialog = self._settings_class(self.config, self, font_manager=self.font_manager)
         self._settings_dialog = dialog
         dialog.cache_cleared.connect(self._on_cache_cleared)
+        dialog.font_mode_changed.connect(self._on_font_mode_changed)
         dialog.finished.connect(
             lambda result, d=dialog: self._on_settings_closed(result, d)
         )
@@ -606,11 +611,19 @@ class MainWindow(QMainWindow):
                 setattr(self.config, field_name, getattr(latest, field_name))
             self._sync_config_to_ui()
             self._apply_wallpaper()
+            self.page_home.chat.set_font_mode(self.config.font_mode)
             show_toast(self, "设置已保存", "success")
         if dialog is not None:
             dialog.deleteLater()
             if self._settings_dialog is dialog:
                 self._settings_dialog = None
+
+    def _on_font_mode_changed(self, mode: str):
+        """字体模式切换后同步已经创建的聊天控件。"""
+        if self.font_manager is not None:
+            mode = self.font_manager.apply(mode)
+        self.config.font_mode = mode
+        self.page_home.chat.set_font_mode(mode)
 
     # ── 配置同步 ──
 

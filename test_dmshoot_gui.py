@@ -522,6 +522,107 @@ def test_chat_view_smart_new_messages():
     view.close()
 
 
+def test_chat_view_tg_message_groups():
+    """Telegram 风格：相邻同人消息合组，圆角和日期分隔按规格变化。"""
+    from datetime import datetime
+    from PySide6.QtTest import QTest
+    from dmshoot.gui.widgets.chat_view import (
+        ChatView, MessageGroupWidget, BubbleWidget, DateSeparatorWidget,
+    )
+    from dmshoot.storage.models import ChatMessage
+
+    view = ChatView()
+    view.resize(760, 520)
+    view.show()
+    base = datetime(2026, 8, 30, 10, 0).timestamp()
+    messages = [
+        ChatMessage(session_id="b:tg", sender_name="Alice", sender_id="alice",
+                    content="第一条", timestamp=base),
+        ChatMessage(session_id="b:tg", sender_name="Alice", sender_id="alice",
+                    content="第二条", timestamp=base + 20),
+        ChatMessage(session_id="b:tg", sender_name="Alice", sender_id="alice",
+                    content="第三条", timestamp=base + 40),
+        ChatMessage(session_id="b:tg", sender_name="AI", sender_id="me",
+                    content="回复一", is_self=True, is_auto=True, timestamp=base + 60),
+        ChatMessage(session_id="b:tg", sender_name="AI", sender_id="me",
+                    content="回复二", is_self=True, is_auto=True, timestamp=base + 80),
+        ChatMessage(session_id="b:tg", sender_name="AI", sender_id="me",
+                    content="回复三", is_self=True, is_auto=True, timestamp=base + 100),
+        ChatMessage(session_id="b:tg", sender_name="Alice", sender_id="alice",
+                    content="跨天消息", timestamp=base + 86400),
+    ]
+    view.load_messages("Alice", messages)
+    QTest.qWait(80)
+    _app.processEvents()
+
+    groups = [item for item in view._content_items if isinstance(item, MessageGroupWidget)]
+    separators = [item for item in view._content_items if isinstance(item, DateSeparatorWidget)]
+    check("TG 消息按相邻发送者分组", [len(g._messages) for g in groups] == [3, 3, 1])
+    check("TG 跨天插入日期分隔", len(separators) == 1)
+
+    def bubbles(group):
+        return [row.bubble for row in group._bubble_rows]
+
+    incoming = bubbles(groups[0])
+    outgoing = bubbles(groups[1])
+    check("TG 对方圆角顺序", [b._position for b in incoming] == ["first", "middle", "last"])
+    check("TG 自己圆角顺序", [b._position for b in outgoing] == ["first", "middle", "last"])
+    check("TG 组首不显示尾巴", incoming[0]._tail_side == "" and outgoing[0]._tail_side == "")
+    check("TG 对方首条外侧圆角", incoming[0]._radii == (13, 13, 13, 4))
+    check("TG 对方中条接缝圆角", incoming[1]._radii == (4, 13, 13, 4))
+    check("TG 对方末条接缝圆角", incoming[-1]._radii == (4, 13, 13, 4))
+    check("TG 自己首条外侧圆角", outgoing[0]._radii == (13, 13, 4, 13))
+    check("TG 自己中条接缝圆角", outgoing[1]._radii == (13, 4, 4, 13))
+    check("TG 自己末条接缝圆角", outgoing[-1]._radii == (13, 4, 4, 13))
+    check("TG 组尾尾巴方向", incoming[-1]._tail_side == "left" and outgoing[-1]._tail_side == "right")
+    check("TG 非末条为尾巴预留对齐位", outgoing[0]._tail_side == ""
+          and groups[1]._bubble_rows[0].tail_gutter > 0)
+    check("TG 末条尾巴向外伸出", outgoing[-1]._tail_side == "right"
+          and groups[1]._bubble_rows[-1].tail_gutter == 0)
+    check("TG 对方末条左下接缝", "border-bottom-left-radius: 4px" in incoming[-1].styleSheet())
+    check("TG 自己末条右下接缝", "border-bottom-right-radius: 4px" in outgoing[-1].styleSheet())
+    check("TG 时间戳嵌入气泡", outgoing[0]._meta_label.text() == "10:01")
+    check("TG 短气泡按内容自然高度", outgoing[0].height() <= 34)
+    check("TG 短气泡不占满整行", outgoing[0].width() < view.scroll.viewport().width() // 2)
+    check("TG 头像贴组底", groups[0].avatar.y() == max(0, groups[0].height() - 36))
+    view.close()
+
+
+def test_chat_view_tg_avatar_stick():
+    """长消息组上滑时头像钉在视口底，并在组顶处停止。"""
+    from PySide6.QtTest import QTest
+    from dmshoot.gui.widgets.chat_view import ChatView, MessageGroupWidget
+    from dmshoot.storage.models import ChatMessage
+
+    view = ChatView()
+    view.resize(460, 220)
+    view.show()
+    messages = [
+        ChatMessage(
+            session_id="b:stick", sender_name="Alice", sender_id="alice",
+            content=f"第{i}条 " + "很长的内容 " * 5,
+            timestamp=1770000000 + i,
+        )
+        for i in range(20)
+    ]
+    view.load_messages("Alice", messages)
+    QTest.qWait(180)
+    _app.processEvents()
+    _app.processEvents()
+
+    group = next(item for item in view._content_items if isinstance(item, MessageGroupWidget))
+    scrollbar = view.scroll.verticalScrollBar()
+    check("TG 头像测试组高于视口", group.height() > view.scroll.viewport().height())
+    scrollbar.setValue(min(80, scrollbar.maximum()))
+    _app.processEvents()
+    expected = min(
+        max(0, scrollbar.value() + view.scroll.viewport().height() - 36 - 4 - group.y()),
+        max(0, group.height() - 36),
+    )
+    check("TG 头像按视口底吸附", group.avatar.y() == expected)
+    view.close()
+
+
 def test_navigation_interactions():
     """导航指示条和重连状态都能安全更新。"""
     from PySide6.QtTest import QTest
@@ -1050,6 +1151,8 @@ ALL_TESTS: list[tuple[str, callable]] = [
     ("ChatView 加载消息", test_chat_view_load_messages),
     ("ChatView 追加消息", test_chat_view_append_message),
     ("ChatView 智能新消息", test_chat_view_smart_new_messages),
+    ("ChatView TG 消息分组", test_chat_view_tg_message_groups),
+    ("ChatView TG 头像吸附", test_chat_view_tg_avatar_stick),
     ("导航交互", test_navigation_interactions),
     ("轻提示交互", test_toast_interaction),
 

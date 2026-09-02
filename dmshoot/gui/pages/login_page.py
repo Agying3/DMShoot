@@ -258,6 +258,7 @@ class LoginPage(QWidget):
         self.dy_status.installEventFilter(self)
         dyl.addWidget(self.dy_status)
         btn_dy = QPushButton("扫码提取")
+        self.dy_btn = btn_dy  # 保留旧测试和外部调用使用的公开别名
         btn_dy.setObjectName("primaryBtn")
         btn_dy.clicked.connect(lambda: self._auto_fetch("douyin"))
         dyl.addWidget(btn_dy)
@@ -282,6 +283,7 @@ class LoginPage(QWidget):
         self.bili_status.installEventFilter(self)
         bl.addWidget(self.bili_status)
         btn_bili = QPushButton("扫码提取")
+        self.bili_btn = btn_bili  # 保留旧测试和外部调用使用的公开别名
         btn_bili.setObjectName("primaryBtn")
         btn_bili.clicked.connect(lambda: self._auto_fetch("bilibili"))
         bl.addWidget(btn_bili)

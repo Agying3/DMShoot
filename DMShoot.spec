@@ -31,6 +31,10 @@ hiddenimports = [
     "cryptography",
     "yaml",
     "bs4",
+    "fontTools",
+    "fontTools.subset",
+    "fontTools.ttLib",
+    "brotli",
 ]
 
 # ── 数据文件 ──
@@ -47,6 +51,10 @@ for _root, _dirs, _files in _os.walk(_prompt_base):
         _prompt_datas.append((_src, _dst_dir))
 
 datas = _prompt_datas + [
+    # UI 字体和可选完整版字体
+    ("tools/fonts/AaCute-UI.ttf", "fonts"),
+    ("tools/fonts/full/AaCute-full.ttf", "fonts/full"),
+    ("tools/fonts/JetBrainsMono.ttf", "fonts"),
     # GUI 样式
     ("dmshoot/gui/styles.qss", "dmshoot/gui"),
     # 平台 icon

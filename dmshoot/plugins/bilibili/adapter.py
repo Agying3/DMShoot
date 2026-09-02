@@ -338,7 +338,9 @@ class BilibiliAdapter(BaseAdapter):
 
     async def _async_poll(self):
         """异步并发轮询 — asyncio.gather 拉所有会话"""
-        if self._stop_event.is_set():
+        # 测试和部分调用方会直接执行一次轮询，不经过 run() 的事件初始化。
+        stop_event = getattr(self, "_stop_event", None)
+        if stop_event is not None and stop_event.is_set():
             return
         import time as _time; _start = _time.perf_counter()
         try:
@@ -437,8 +439,13 @@ class BilibiliAdapter(BaseAdapter):
 
     async def _sleep(self, seconds: float):
         """可中断 sleep — 收到 stop 信号时立即返回"""
+        # 直接调用一次 _async_poll 时没有 run() 创建的停止事件；
+        # 这种调用只执行一轮，不应额外等待下一轮轮询间隔。
+        stop_event = getattr(self, "_stop_event", None)
+        if stop_event is None:
+            return
         try:
-            await asyncio.wait_for(self._stop_event.wait(), timeout=seconds)
+            await asyncio.wait_for(stop_event.wait(), timeout=seconds)
         except asyncio.TimeoutError:
             pass
 

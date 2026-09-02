@@ -5,7 +5,6 @@
 
 /* ── 全局 ── */
 QWidget {
-    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
     font-size: 14px;
     color: rgba(255,255,255,0.98);
     background: transparent;
@@ -240,6 +239,32 @@ QPushButton:pressed {
 QPushButton:disabled {
     color: rgba(255,255,255,0.30);
     border-color: rgba(255,255,255,0.04);
+}
+
+/* ── Telegram 风格聊天分组 ── */
+QWidget#chatBubbleContainer {
+    background: transparent;
+}
+QLabel#tgSenderName {
+    color: #6AC5E8;
+    font-size: 13px;
+    font-weight: 600;
+    background: transparent;
+    padding: 0 10px 2px 10px;
+}
+QFrame#tgDateSeparator {
+    background: transparent;
+    border: none;
+}
+QLabel#tgDateText {
+    color: #7D8B99;
+    background: rgba(0,0,0,0.28);
+    border-radius: 14px;
+    padding: 4px 11px;
+    font-size: 12px;
+}
+QLabel#tgBubbleText, QLabel#tgBubbleMeta {
+    background: transparent;
 }
 
 QPushButton#primaryBtn {

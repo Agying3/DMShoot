@@ -10,5 +10,8 @@ psutil>=5.9,<6.0
 requests>=2.31,<3.0
 cryptography>=48.0,<49.0
 rich>=13.7.0
+# UI 字体子集同步（设置页一键重建）
+fonttools>=4.0
+brotli>=1.0
 # DouYin_Spider — 已clone到 external/DouYin_Spider (不是pip包)
 # setup.bat 会自动 git clone，无需手动操作

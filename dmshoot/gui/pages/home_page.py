@@ -16,7 +16,7 @@ _IM_UNAVAILABLE = frozenset({"xiaohongshu", "kuaishou"})  # Web 端不支持 IM
 
 
 class HomePage(QWidget):
-    def __init__(self, monitor: MonitorPanel, platforms: list[tuple[str, str]]):
+    def __init__(self, monitor: MonitorPanel, platforms: list[tuple[str, str]], font_manager=None):
         super().__init__()
         self.monitor = monitor
         self._current_platform = platforms[0][0] if platforms else "bilibili"
@@ -48,7 +48,7 @@ class HomePage(QWidget):
         hbox.addWidget(self.contacts)
 
         # 右：对话气泡
-        self.chat = ChatView()
+        self.chat = ChatView(font_manager=font_manager)
         hbox.addWidget(self.chat, stretch=1)
 
         horizontal_container = QWidget()
@@ -108,7 +108,14 @@ class HomePage(QWidget):
         self._msg_cache.pop(session_id, None)
         msgs = database.get_messages(session_id, limit=100)
         self._msg_cache[session_id] = msgs
-        self.chat.load_messages(peer_name, msgs)
+        session = next(
+            (item for item in database.get_sessions(self._current_platform)
+             if item.session_id == session_id),
+            None,
+        )
+        peer_avatar_url = session.avatar_url if session else ""
+        self.chat.set_conversation(session_id, peer_avatar_url)
+        self.chat.load_messages(peer_name, msgs, peer_avatar_url)
 
     def refresh_session(self, session_id: str):
         """新联系人或资料补全后，按现有节流策略刷新当前平台。"""

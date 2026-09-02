@@ -7,11 +7,12 @@ from PySide6.QtWidgets import (
     QLabel, QCheckBox, QComboBox, QPushButton, QDoubleSpinBox,
     QGroupBox, QFormLayout, QSpinBox, QScrollArea, QFrame
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QThread
 
 from dmshoot.storage.models import AppConfig
 from dmshoot.storage import database
 from dmshoot.gui.widgets.toast import show_toast
+from dmshoot.gui.font_manager import FontManager
 
 
 class GlassPopup(QDialog):
@@ -91,11 +92,18 @@ class SettingsDialog(QDialog):
     """全局设置对话框"""
     cache_cleared = Signal(str)  # platform name
     cache_clear_finished = Signal(bool, str)
+    font_mode_changed = Signal(str)
 
-    def __init__(self, config: AppConfig, parent=None):
+    def __init__(self, config: AppConfig, parent=None, font_manager=None):
         super().__init__(parent)
         # 设置页使用独立草稿；保存时只合并本页拥有的字段，不能覆盖扫码等并发更新。
         self.config = database.load_config()
+        self.font_manager = font_manager or FontManager.instance()
+        self._original_font_mode = self.config.font_mode
+        self._sync_worker = None
+        self._sync_result_handled = False
+        self._sync_thread_finished = False
+        self._close_requested = False
         self._cache_clear_button = None
         self.cache_clear_finished.connect(self._on_cache_clear_finished)
         self.setWindowTitle("DMShoot 设置")
@@ -178,6 +186,7 @@ class SettingsDialog(QDialog):
         self._theme_placeholder = QWidget()
         tabs.addTab(self._theme_placeholder, "主题")
         tabs.addTab(self._create_data_tab(), "数据")
+        tabs.addTab(self._create_font_tab(), "字体")
         self._perf_placeholder = QWidget()
         tabs.addTab(self._perf_placeholder, "性能")
         tabs.addTab(self._create_debug_tab(), "调试")
@@ -292,6 +301,131 @@ class SettingsDialog(QDialog):
         layout.addWidget(cache_group)
         layout.addStretch()
         return w
+
+    def _create_font_tab(self) -> QWidget:
+        """字体模式和 UI 子集同步。"""
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setSpacing(10)
+
+        font_group = QGroupBox("字体")
+        font_layout = QVBoxLayout(font_group)
+        font_layout.setSpacing(8)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("字体模式"))
+        self._font_mode_combo = QComboBox()
+        self._font_mode_combo.addItem("系统默认", "system")
+        self._font_mode_combo.addItem("UI 可爱体（默认）", "ui-aacute")
+        self._font_mode_combo.addItem("全站可爱体", "full-aacute")
+        mode_index = self._font_mode_combo.findData(self.config.font_mode)
+        self._font_mode_combo.setCurrentIndex(max(0, mode_index))
+        self._font_mode_combo.currentIndexChanged.connect(self._on_font_mode_combo_changed)
+        mode_row.addWidget(self._font_mode_combo, 1)
+        font_layout.addLayout(mode_row)
+
+        sync_row = QHBoxLayout()
+        self._sync_font_btn = QPushButton("同步字体")
+        self._sync_font_btn.setCursor(Qt.PointingHandCursor)
+        self._sync_font_btn.setToolTip("扫描 UI 文案和公开提示词，重建 UI 字体子集")
+        self._sync_font_btn.clicked.connect(self._on_sync_font)
+        sync_row.addWidget(self._sync_font_btn)
+        self._font_status_label = QLabel("UI 字体已随程序加载" if self.font_manager.ui_family else "UI 字体不可用，当前使用系统字体")
+        self._font_status_label.setWordWrap(True)
+        self._font_status_label.setStyleSheet(
+            "color: rgba(255,255,255,0.45); font-size: 11px; background: transparent;"
+        )
+        sync_row.addWidget(self._font_status_label, 1)
+        font_layout.addLayout(sync_row)
+
+        layout.addWidget(font_group)
+        layout.addStretch()
+        return w
+
+    def _on_font_mode_combo_changed(self, index: int):
+        if getattr(self, "_font_mode_updating", False):
+            return
+        mode = self._font_mode_combo.itemData(index)
+        if not mode:
+            return
+        actual = self.font_manager.apply(mode)
+        self.config.font_mode = actual
+        if actual != mode:
+            self._font_mode_updating = True
+            try:
+                self._font_mode_combo.setCurrentIndex(self._font_mode_combo.findData(actual))
+            finally:
+                self._font_mode_updating = False
+            self._font_status_label.setText("目标字体不可用，已回退到可用模式")
+        else:
+            self._font_status_label.setText("字体模式已切换，保存后保持此设置")
+        self.font_mode_changed.emit(actual)
+
+    def _on_sync_font(self):
+        if self._sync_worker is not None and self._sync_worker.isRunning():
+            return
+        self._sync_font_btn.setEnabled(False)
+        self._sync_font_btn.setText("同步中…")
+        self._font_status_label.setText("正在扫描 UI 文案…")
+        font_dir = str(self.font_manager.font_dir)
+
+        class _FontSyncWorker(QThread):
+            done = Signal(object)
+
+            def run(self):
+                try:
+                    from dmshoot.core.font_builder import build_ui_subset
+                    result = build_ui_subset(font_dir, commit=False)
+                    self.done.emit(("ok", result, ""))
+                except RuntimeError as exc:
+                    self.done.emit(("skipped", None, str(exc)))
+                except Exception as exc:
+                    self.done.emit(("error", None, str(exc)))
+
+        worker = _FontSyncWorker(self)
+        worker.done.connect(self._on_sync_font_done)
+        worker.finished.connect(self._on_sync_worker_finished)
+        worker.finished.connect(worker.deleteLater)
+        self._sync_result_handled = False
+        self._sync_thread_finished = False
+        self._sync_worker = worker
+        worker.start()
+
+    def _on_sync_font_done(self, payload):
+        status, result, reason = payload
+        self._sync_font_btn.setEnabled(True)
+        self._sync_font_btn.setText("同步字体")
+        self._sync_result_handled = True
+        if status == "ok":
+            temporary_path = result.get("temporary_path") if result else None
+            if not self.font_manager.reload_ui_font(temporary_path):
+                self._font_status_label.setText("子集已生成，但字体热加载失败")
+                show_toast(self, "字体热加载失败，请重启应用", "warning")
+            else:
+                self.font_mode_changed.emit(self.font_manager.current_mode)
+                chars = result.get("chars", 0) if result else 0
+                self._font_status_label.setText(f"已重建 {chars} 个汉字，重启后最稳")
+                show_toast(self, f"字体已同步，覆盖 {chars} 个汉字", "success")
+        elif status == "skipped":
+            self._font_status_label.setText(reason)
+            show_toast(self, f"无需同步：{reason}", "warning")
+        else:
+            self._font_status_label.setText(f"同步失败：{reason}")
+            show_toast(self, "字体同步失败", "warning")
+        self._maybe_finish_sync_worker()
+
+    def _on_sync_worker_finished(self):
+        self._sync_thread_finished = True
+        self._maybe_finish_sync_worker()
+
+    def _maybe_finish_sync_worker(self):
+        """等结果回调和线程 finished 都到达后，才允许销毁线程对象。"""
+        if not (self._sync_result_handled and self._sync_thread_finished):
+            return
+        self._sync_worker = None
+        if self._close_requested:
+            self._close_requested = False
+            self.reject()
 
     def _create_theme_tab(self) -> QWidget:
         """主题页 — 聊天背景壁纸设置"""
@@ -721,7 +855,23 @@ class SettingsDialog(QDialog):
 
     def reject(self):
         """草稿未写入共享配置，取消可直接关闭。"""
+        if self._sync_worker is not None and self._sync_worker.isRunning():
+            self._close_requested = True
+            self._font_status_label.setText("字体同步完成后关闭设置")
+            return
+        # 字体模式为即时预览；取消时恢复打开设置前的模式。
+        if self.font_manager.current_mode != self._original_font_mode:
+            actual = self.font_manager.apply(self._original_font_mode)
+            self.config.font_mode = actual
+            self.font_mode_changed.emit(actual)
         super().reject()
+
+    def accept(self):
+        """同步期间不允许保存并销毁设置页，等待同步结束后再保存。"""
+        if self._sync_worker is not None and self._sync_worker.isRunning():
+            self._font_status_label.setText("字体同步进行中，请稍候再保存")
+            return
+        super().accept()
 
     def _on_save(self):
         """保存设置"""
@@ -736,6 +886,7 @@ class SettingsDialog(QDialog):
             "rate_kuaishou": self.rate_ks.value(),
             "wallpaper_path": self.config.wallpaper_path,
             "wallpaper_gallery": list(self.config.wallpaper_gallery),
+            "font_mode": self.config.font_mode,
             "debug_log_levels": self.config.debug_log_levels,
         }
         if hasattr(self, '_perf_toggle'):
