@@ -656,11 +656,13 @@ class ChatView(QWidget):
         self._model.set_font_families(self._content_family, self._meta_family)
         quick = QQuickWidget()
         quick.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
-        # Quick 只输出透明 FBO，壁纸由 QWidget 父级 WallpaperBody 绘制。
-        # 不使用 WA_AlwaysStackOnTop，否则会破坏 QStackedWidget 的正常层级。
+        # Quick 使用透明 FBO 叠在 QWidget 父级上。Windows 下如果不启用
+        # AlwaysStackOnTop，透明像素会穿透整个窗口的 backing store，直接
+        # 露出 DMShoot 窗口下面的其他程序，而不是露出 WallpaperBody。
         quick.setClearColor(QColor(0, 0, 0, 0))
         quick.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         quick.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        quick.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop)
         quick.setAutoFillBackground(False)
         quick.setStyleSheet("QQuickWidget { background: transparent; border: none; }")
         quick.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)

@@ -187,7 +187,9 @@ def test_quick_transparent_overlay_preserves_parent_wallpaper(qapp, qtbot, monke
     assert not view.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
     assert not view._content_host.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
     assert not view._content_stack.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-    assert not view._quick.testAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop)
+    # Windows 的 QQuickWidget 透明 FBO 需要保持在父级 QWidget 合成层之上，
+    # 否则透明像素会穿透到 DMShoot 窗口外，而不是透出 WallpaperBody。
+    assert view._quick.testAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop)
     assert view._quick.autoFillBackground() is False
 
 

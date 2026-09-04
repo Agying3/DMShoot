@@ -9,7 +9,7 @@ DMShoot 的聊天区默认使用 Qt Quick，QWidget 保留为兼容和异常降�
 | `quick` | 默认生产后端 | `QQuickWidget` + QML `ListView` + Qt Quick Scene Graph，透明覆盖 QWidget 壁纸 |
 | `widgets` | 显式兼容/降级后端 | 原有 QWidget 气泡实现，与主窗口壁纸共享 QWidget 合成链路 |
 
-Quick 聊天区使用透明 FBO 覆盖在现有 QWidget 聊天容器上，壁纸仍由主窗口的 `WallpaperBody` 统一绘制。Quick 不绘制聊天底板，因此空白区域和消息气泡之间不会切断壁纸。Windows 通常使用实际可用的图形后端，例如 `Direct3D11`。
+Quick 聊天区使用透明 FBO 覆盖在现有 QWidget 聊天容器上，壁纸仍由主窗口的 `WallpaperBody` 统一绘制。Quick 不绘制聊天底板，因此空白区域和消息气泡之间不会切断壁纸。Windows 下保留 `WA_AlwaysStackOnTop`，确保透明 FBO 透出的是 DMShoot 父级壁纸，而不是窗口外的桌面或其他应用。Windows 通常使用实际可用的图形后端，例如 `Direct3D11`。
 
 ## 运行时选择
 
