@@ -7,19 +7,41 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import os
 import re
+from threading import Event
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QFont, QFontMetrics, QTextOption
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QModelIndex,
+    QObject,
+    QRunnable,
+    QThreadPool,
+    Qt,
+    QUrl,
+    Signal,
+    Slot,
+)
+from PySide6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QFont,
+    QFontMetrics,
+    QTextOption,
+    QPalette,
+    QImage,
+    QPainter,
+    QPainterPath,
+)
 from PySide6.QtQuickWidgets import QQuickWidget
 from PySide6.QtWidgets import (
     QLabel,
     QSizePolicy,
-    QStackedLayout,
+    QStackedWidget,
     QTextBrowser,
     QHBoxLayout,
     QVBoxLayout,
@@ -31,6 +53,7 @@ from dmshoot.gui.widgets.chat_view import (
     BUBBLE_RADIUS,
     META_FONT_SIZE,
     SEAM_RADIUS,
+    _can_join_group,
     _avatar_cache_path,
     _group_key,
     _group_messages,
@@ -43,6 +66,157 @@ from dmshoot.gui.widgets.chat_view import (
 PAGE_SIZE = 100
 MAX_BUBBLE_WIDTH = 480
 _URL_RE = re.compile(r"https?://[^\s<>]+", re.IGNORECASE)
+_AVATAR_RENDER_SIZE = 72
+
+
+def _quick_avatar_cache_path(url: str) -> Path | None:
+    """返回 Qt Quick 专用的圆形头像缓存，未生成时不让 QML 直连网络。"""
+    source = _avatar_cache_path(url)
+    if source is None:
+        return None
+    digest = hashlib.md5(url.encode()).hexdigest()[:16]
+    target = source.parent / f"{digest}.chat.png"
+    return target if target.exists() else None
+
+
+def _build_quick_avatar(source: Path, url: str) -> Path | None:
+    """在工作线程把原头像裁成 72px 圆形 PNG，供 Quick 直接绘制。"""
+    digest = hashlib.md5(url.encode()).hexdigest()[:16]
+    target = source.parent / f"{digest}.chat.png"
+    if target.exists():
+        return target
+
+    image = QImage(str(source))
+    if image.isNull():
+        return None
+    scaled = image.scaled(
+        _AVATAR_RENDER_SIZE,
+        _AVATAR_RENDER_SIZE,
+        Qt.KeepAspectRatioByExpanding,
+        Qt.SmoothTransformation,
+    )
+    output = QImage(
+        _AVATAR_RENDER_SIZE,
+        _AVATAR_RENDER_SIZE,
+        QImage.Format.Format_ARGB32_Premultiplied,
+    )
+    output.fill(Qt.transparent)
+    painter = QPainter(output)
+    painter.setRenderHint(QPainter.Antialiasing)
+    clip = QPainterPath()
+    clip.addEllipse(0, 0, _AVATAR_RENDER_SIZE, _AVATAR_RENDER_SIZE)
+    painter.setClipPath(clip)
+    painter.drawImage(
+        (_AVATAR_RENDER_SIZE - scaled.width()) // 2,
+        (_AVATAR_RENDER_SIZE - scaled.height()) // 2,
+        scaled,
+    )
+    painter.end()
+
+    temp = target.with_suffix(".chat.tmp.png")
+    if output.save(str(temp), "PNG"):
+        temp.replace(target)
+        return target
+    return None
+
+
+def _quick_avatar_source(url: str) -> str:
+    """将已准备好的圆形头像转为 QML 本地 URL。"""
+    avatar_path = _quick_avatar_cache_path(url)
+    return QUrl.fromLocalFile(str(avatar_path)).toString() if avatar_path else ""
+
+
+class _MarkdownLoadSignals(QObject):
+    finished = Signal(int, str, str)
+
+
+class _MarkdownLoadTask(QRunnable):
+    """在工作线程读取和转换文档，避免切换平台时卡住 GUI。"""
+
+    def __init__(self, generation: int, path: str, family: str):
+        super().__init__()
+        self.generation = generation
+        self.path = path
+        self.family = family
+        self.signals = _MarkdownLoadSignals()
+        self._cancelled = Event()
+
+    def cancel(self) -> None:
+        self._cancelled.set()
+
+    def run(self):
+        if self._cancelled.is_set():
+            return
+        try:
+            import markdown
+
+            content = Path(self.path).read_text(encoding="utf-8")
+            if self._cancelled.is_set():
+                return
+            body = markdown.markdown(
+                content,
+                extensions=["tables", "fenced_code", "codehilite", "nl2br"],
+            )
+            if self._cancelled.is_set():
+                return
+            safe_family = self.family.replace('"', "")
+            css = LegacyChatView._MD_CSS.replace("CHAT_FONT_FAMILY", safe_family)
+            html_body = f"<html><head><style>{css}</style></head><body>{body}</body></html>"
+            self.signals.finished.emit(self.generation, html_body, "")
+        except Exception as exc:
+            if not self._cancelled.is_set():
+                self.signals.finished.emit(self.generation, "", f"无法加载日志：{exc}")
+
+
+class _AvatarLoadSignals(QObject):
+    finished = Signal(str, str)
+
+
+class _AvatarLoadTask(QRunnable):
+    """后台下载并缓存头像；QML 只读取本地文件，避免网络图片加载不稳定。"""
+
+    def __init__(self, url: str):
+        super().__init__()
+        self.url = url
+        self.signals = _AvatarLoadSignals()
+
+    def run(self):
+        cached = _avatar_cache_path(self.url)
+        if cached is not None:
+            rounded = _build_quick_avatar(cached, self.url)
+            self.signals.finished.emit(self.url, str(rounded or ""))
+            return
+        if not self.url.startswith(("http://", "https://")):
+            self.signals.finished.emit(self.url, "")
+            return
+        try:
+            import httpx
+
+            response = httpx.get(
+                self.url,
+                headers={"User-Agent": "Mozilla/5.0"},
+                follow_redirects=True,
+                timeout=12,
+            )
+            response.raise_for_status()
+            image = QImage()
+            if not image.loadFromData(response.content) or image.isNull():
+                self.signals.finished.emit(self.url, "")
+                return
+            # quick_chat_view.py 位于 dmshoot/gui，资源缓存与 QWidget 后端共用
+            # dmshoot/data/avatars，不能写到项目根目录下的 data。
+            cache_dir = Path(__file__).resolve().parents[1] / "data" / "avatars"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            target = cache_dir / f"{hashlib.md5(self.url.encode()).hexdigest()[:16]}.png"
+            temp = target.with_suffix(".tmp.png")
+            if image.save(str(temp), "PNG"):
+                temp.replace(target)
+                rounded = _build_quick_avatar(target, self.url)
+                self.signals.finished.emit(self.url, str(rounded or ""))
+                return
+            self.signals.finished.emit(self.url, "")
+        except Exception:
+            self.signals.finished.emit(self.url, "")
 
 
 def _message_key(message: ChatMessage) -> str:
@@ -104,6 +278,7 @@ class ChatMessageModel(QAbstractListModel):
         self._messages: list[ChatMessage] = []
         self._items: list[dict] = []
         self._peer_avatar_url = ""
+        self._my_avatar_url = ""
         self._content_family = "Microsoft YaHei"
         self._meta_family = "Segoe UI"
 
@@ -165,10 +340,28 @@ class ChatMessageModel(QAbstractListModel):
         self,
         messages: list[ChatMessage],
         peer_avatar_url: str = "",
+        my_avatar_url: str = "",
     ) -> None:
         self._messages = list(messages)
         self._peer_avatar_url = peer_avatar_url or ""
+        self._my_avatar_url = my_avatar_url or ""
         self._reset_items()
+
+    def set_avatar_urls(self, peer_avatar_url: str = "", my_avatar_url: str = "") -> None:
+        self._peer_avatar_url = peer_avatar_url or ""
+        self._my_avatar_url = my_avatar_url or ""
+        # 头像下载完成时不能重置整个模型，否则 ListView 会销毁 delegate，
+        # 用户停在历史消息中也会被拉回顶部或底部。
+        for row, item in enumerate(self._items):
+            if item["kind"] != "group":
+                continue
+            avatar_url = self._my_avatar_url if item["isSelf"] else self._peer_avatar_url
+            avatar_source = _quick_avatar_source(avatar_url)
+            if item.get("avatarSource", "") == avatar_source:
+                continue
+            item["avatarSource"] = avatar_source
+            index = self.index(row, 0)
+            self.dataChanged.emit(index, index, [self.AvatarSourceRole])
 
     def prepend_messages(self, messages: list[ChatMessage]) -> None:
         if not messages:
@@ -183,7 +376,12 @@ class ChatMessageModel(QAbstractListModel):
             return
 
         last = self._items[-1]
-        if last["kind"] == "group" and last["groupKey"] == _group_key(message):
+        previous = self._messages[-2] if len(self._messages) > 1 else None
+        if (
+            last["kind"] == "group"
+            and previous is not None
+            and _can_join_group(previous, message)
+        ):
             group_size = len(last["messages"]) + 1
             group_messages = self._messages[-group_size:]
             self._items[-1] = self._group_dict(group_messages)
@@ -250,8 +448,8 @@ class ChatMessageModel(QAbstractListModel):
         first = messages[0]
         is_self = _message_is_self(first)
         rows = [self._message_dict(message, index, len(messages)) for index, message in enumerate(messages)]
-        avatar_path = "" if is_self else _avatar_cache_path(self._peer_avatar_url)
-        avatar_source = QUrl.fromLocalFile(str(avatar_path)).toString() if avatar_path else ""
+        avatar_url = self._my_avatar_url if is_self else self._peer_avatar_url
+        avatar_source = _quick_avatar_source(avatar_url)
         return {
             "kind": "group",
             "groupKey": _group_key(first),
@@ -351,6 +549,7 @@ class ChatView(QWidget):
             self._content_family, self._meta_family = "Microsoft YaHei", "Segoe UI"
         self._conversation_id = ""
         self._peer_avatar_url = ""
+        self._my_avatar_url = ""
         self._messages: list[ChatMessage] = []
         self._at_bottom = True
         self._history_available = True
@@ -359,6 +558,10 @@ class ChatView(QWidget):
         self._legacy: LegacyChatView | None = None
         self._renderer_name = "widgets"
         self._renderer_backend = "Software"
+        self._markdown_browser: QTextBrowser | None = None
+        self._markdown_generation = 0
+        self._markdown_tasks: dict[int, _MarkdownLoadTask] = {}
+        self._avatar_tasks: dict[str, _AvatarLoadTask] = {}
 
         self._build_shell()
         self._select_renderer()
@@ -389,9 +592,23 @@ class ChatView(QWidget):
         title_layout.addWidget(self.title_label, 1)
         layout.addWidget(title_row)
 
-        self._content_stack = QStackedLayout()
         self._content_host = QWidget()
-        self._content_host.setLayout(self._content_stack)
+        self._content_host.setObjectName("chatContentHost")
+        self._content_host.setAutoFillBackground(True)
+        palette = self._content_host.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#10141D"))
+        self._content_host.setPalette(palette)
+        host_layout = QVBoxLayout(self._content_host)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_layout.setSpacing(0)
+        # QStackedLayout 在窗口刚显示时可能暂时不给当前页分配几何尺寸。
+        # 使用 QStackedWidget 让 Qt 直接管理当前页的可见性和尺寸，
+        # 避免 QQuickWidget 首帧为 0x0 时露出下层页面。
+        self._content_stack = QStackedWidget(self._content_host)
+        self._content_stack.setObjectName("chatContentStack")
+        self._content_stack.setAutoFillBackground(True)
+        self._content_stack.setStyleSheet("QStackedWidget { background: #10141D; border: none; }")
+        host_layout.addWidget(self._content_stack)
         layout.addWidget(self._content_host, 1)
 
         self._placeholder = QLabel()
@@ -401,6 +618,18 @@ class ChatView(QWidget):
             "color: rgba(255,255,255,0.35); font-size: 14px; padding: 40px;"
         )
         self._content_stack.addWidget(self._placeholder)
+
+        self._markdown_browser = QTextBrowser()
+        self._markdown_browser.setOpenExternalLinks(True)
+        self._markdown_browser.setFrameShape(QTextBrowser.NoFrame)
+        self._markdown_browser.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
+        self._markdown_browser.setStyleSheet(
+            "QTextBrowser { background: transparent; border: none; }"
+            "QScrollBar:vertical { width: 8px; background: transparent; }"
+            "QScrollBar::handle:vertical { background: rgba(255,255,255,0.12); border-radius: 4px; min-height: 40px; }"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        )
+        self._content_stack.addWidget(self._markdown_browser)
 
     def _select_renderer(self) -> None:
         requested = os.environ.get("DMSHOOT_CHAT_RENDERER", "auto").lower().strip()
@@ -425,7 +654,11 @@ class ChatView(QWidget):
         self._model.set_font_families(self._content_family, self._meta_family)
         quick = QQuickWidget()
         quick.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
-        quick.setClearColor(Qt.transparent)
+        # QQuickWidget 的透明 FBO 会把 QStackedWidget 里已经隐藏的页面露出来。
+        # 聊天区域单独使用稳定底板，避免空消息区看起来像被挖空。
+        quick.setClearColor(QColor("#10141D"))
+        quick.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+        quick.setStyleSheet("QQuickWidget { background: #10141D; border: none; }")
         quick.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         quick.rootContext().setContextProperty("chatModel", self._model)
         quick.statusChanged.connect(self._on_quick_status)
@@ -439,6 +672,9 @@ class ChatView(QWidget):
         self._quick = quick
         self._content_stack.addWidget(quick)
         self._content_stack.setCurrentWidget(quick)
+        quick.show()
+        quick.raise_()
+        quick.updateGeometry()
         self._renderer_name = "quick"
         self._wire_quick_root()
         self._update_renderer_backend()
@@ -464,8 +700,12 @@ class ChatView(QWidget):
         root.bottomStateChanged.connect(self._on_bottom_state_changed)
         root.linkActivated.connect(self._open_url)
         root.setFonts(self._content_family, self._meta_family)
+        self._content_stack.setCurrentWidget(self._quick)
+        self._quick.show()
         if self._messages:
-            self._model.set_messages(self._messages, self._peer_avatar_url)
+            self._model.set_messages(
+                self._messages, self._peer_avatar_url, self._my_avatar_url
+            )
             root.loadMessages()
 
     def _update_renderer_backend(self) -> None:
@@ -497,10 +737,12 @@ class ChatView(QWidget):
         self._renderer_backend = "Software"
         self._content_stack.setCurrentWidget(self._legacy)
         self._legacy.set_conversation(self._conversation_id, self._peer_avatar_url)
+        self._legacy.set_account_avatar(self._my_avatar_url)
         self._legacy.set_font_mode(self._font_mode)
         if self._messages:
             self._legacy.load_messages(
-                self.title_label.text(), self._messages, self._peer_avatar_url
+                self.title_label.text(), self._messages,
+                self._peer_avatar_url, self._my_avatar_url,
             )
 
     def _set_quick_visible(self) -> bool:
@@ -519,8 +761,41 @@ class ChatView(QWidget):
     def set_conversation(self, conversation_id: str, peer_avatar_url: str = ""):
         self._conversation_id = conversation_id or ""
         self._peer_avatar_url = peer_avatar_url or ""
+        self._ensure_avatar_cached(self._peer_avatar_url)
         if self._legacy is not None:
             self._legacy.set_conversation(self._conversation_id, self._peer_avatar_url)
+
+    def set_account_avatar(self, avatar_url: str = ""):
+        self._my_avatar_url = avatar_url or ""
+        self._ensure_avatar_cached(self._my_avatar_url)
+        if self._legacy is not None:
+            self._legacy.set_account_avatar(self._my_avatar_url)
+        if self._renderer_name == "quick":
+            self._model.set_avatar_urls(self._peer_avatar_url, self._my_avatar_url)
+
+    def _ensure_avatar_cached(self, url: str) -> None:
+        if not url or _quick_avatar_cache_path(url) is not None or url in self._avatar_tasks:
+            return
+        task = _AvatarLoadTask(url)
+        self._avatar_tasks[url] = task
+        task.signals.finished.connect(self._on_avatar_cached, Qt.QueuedConnection)
+        QThreadPool.globalInstance().start(task)
+
+    @Slot(str, str)
+    def _on_avatar_cached(self, url: str, path: str) -> None:
+        from dmshoot.utils.console_log import get_logger
+
+        self._avatar_tasks.pop(url, None)
+        if not path:
+            get_logger(__name__).warning(f"头像下载失败: {url[:120]}")
+            return
+        if url != self._peer_avatar_url and url != self._my_avatar_url:
+            return
+        if self._renderer_name == "quick":
+            self._model.set_avatar_urls(self._peer_avatar_url, self._my_avatar_url)
+        elif self._legacy is not None:
+            self._legacy.set_conversation(self._conversation_id, self._peer_avatar_url)
+            self._legacy.set_account_avatar(self._my_avatar_url)
 
     def set_history_available(self, available: bool) -> None:
         self._history_available = bool(available)
@@ -539,6 +814,7 @@ class ChatView(QWidget):
             self._legacy.set_font_mode(mode)
 
     def show_placeholder(self, text: str):
+        self._invalidate_markdown()
         self.title_icon.hide()
         self.title_label.setText("")
         if self._legacy is not None:
@@ -558,35 +834,36 @@ class ChatView(QWidget):
             self.title_icon.show()
         else:
             self.title_icon.hide()
-        if self._legacy is not None:
-            self._content_stack.setCurrentWidget(self._legacy)
-            self._legacy.show_markdown(md_path, title)
+        self._invalidate_markdown()
+        generation = self._markdown_generation
+        browser = self._markdown_browser
+        if browser is None:
             return
-        browser = QTextBrowser()
-        browser.setOpenExternalLinks(True)
-        browser.setFrameShape(QTextBrowser.NoFrame)
-        browser.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
-        browser.setStyleSheet(
-            "QTextBrowser { background: transparent; border: none; }"
-            "QScrollBar:vertical { width: 8px; background: transparent; }"
-            "QScrollBar::handle:vertical { background: rgba(255,255,255,0.12); border-radius: 4px; min-height: 40px; }"
-            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
-        )
-        try:
-            import markdown
-
-            content = Path(md_path).read_text(encoding="utf-8")
-            body = markdown.markdown(content, extensions=["tables", "fenced_code", "codehilite", "nl2br"])
-            safe_family = self._content_family.replace('"', "")
-            css = LegacyChatView._MD_CSS.replace("CHAT_FONT_FAMILY", safe_family)
-            browser.setHtml(f"<html><head><style>{css}</style></head><body>{body}</body></html>")
-        except Exception as exc:
-            browser.setPlainText(f"无法加载日志：{exc}")
-        self._markdown_browser = browser
-        self._content_stack.addWidget(browser)
+        browser.setPlainText("正在加载文档...")
         self._content_stack.setCurrentWidget(browser)
+        task = _MarkdownLoadTask(generation, md_path, self._content_family)
+        self._markdown_tasks[generation] = task
+        task.signals.finished.connect(self._on_markdown_ready, Qt.QueuedConnection)
+        QThreadPool.globalInstance().start(task)
+
+    def _invalidate_markdown(self):
+        self._markdown_generation += 1
+        for task in self._markdown_tasks.values():
+            task.cancel()
+        self._markdown_tasks.clear()
+
+    @Slot(int, str, str)
+    def _on_markdown_ready(self, generation: int, html_body: str, error: str):
+        self._markdown_tasks.pop(generation, None)
+        if generation != self._markdown_generation or self._markdown_browser is None:
+            return
+        if error:
+            self._markdown_browser.setPlainText(error)
+        else:
+            self._markdown_browser.setHtml(html_body)
 
     def clear_markdown(self):
+        self._invalidate_markdown()
         self.title_icon.hide()
         self.title_label.setText("选择会话")
         self._messages = []
@@ -599,15 +876,21 @@ class ChatView(QWidget):
         self._content_stack.setCurrentWidget(self._quick)
 
     def load_messages(self, title: str, messages: list[ChatMessage], peer_avatar_url: str = ""):
+        self._invalidate_markdown()
         self.title_icon.hide()
         self.title_label.setText(title)
         self._messages = list(messages)
         if peer_avatar_url:
             self._peer_avatar_url = peer_avatar_url
+            self._ensure_avatar_cached(self._peer_avatar_url)
         if self._legacy is not None:
-            self._legacy.load_messages(title, self._messages, self._peer_avatar_url)
+            self._legacy.load_messages(
+                title, self._messages, self._peer_avatar_url, self._my_avatar_url
+            )
             return
-        self._model.set_messages(self._messages, self._peer_avatar_url)
+        self._model.set_messages(
+            self._messages, self._peer_avatar_url, self._my_avatar_url
+        )
         self._set_quick_visible()
         if self._root is not None:
             self._root.setHistoryAvailable(self._history_available)
@@ -618,7 +901,10 @@ class ChatView(QWidget):
             return
         if self._legacy is not None:
             self._messages = list(messages) + self._messages
-            self._legacy.load_messages(self.title_label.text(), self._messages, self._peer_avatar_url)
+            self._legacy.load_messages(
+                self.title_label.text(), self._messages,
+                self._peer_avatar_url, self._my_avatar_url,
+            )
             return
         anchor = _message_key(self._messages[0]) if self._messages else ""
         if self._root is not None and anchor:
@@ -653,3 +939,7 @@ class ChatView(QWidget):
             return
         if self._root is not None:
             self._root.jumpToLatest()
+
+    def closeEvent(self, event):
+        self._invalidate_markdown()
+        super().closeEvent(event)

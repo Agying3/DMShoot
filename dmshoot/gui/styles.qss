@@ -259,6 +259,9 @@ QProgressBar#fontSyncProgress::chunk {
 QWidget#chatBubbleContainer {
     background: transparent;
 }
+QWidget#chatContentHost {
+    background: #10141D;
+}
 QLabel#tgSenderName {
     color: #6AC5E8;
     font-size: 13px;

@@ -21,6 +21,7 @@ class HomePage(QWidget):
     def __init__(self, monitor: MonitorPanel, platforms: list[tuple[str, str]], font_manager=None):
         super().__init__()
         self.monitor = monitor
+        self._adapters: dict = {}
         self._current_platform = platforms[0][0] if platforms else "bilibili"
         self._current_session: str = ""
         self._msg_cache: dict[str, list] = {}  # 消息缓存，避免重复读DB
@@ -77,8 +78,27 @@ class HomePage(QWidget):
         self.setLayout(main)
         self._load_contacts()
 
+    def set_adapters(self, adapters: dict):
+        """接收 MainWindow 的适配器字典，用于显示当前账号头像。"""
+        self._adapters = adapters
+        self.refresh_account_avatar()
+
+    def refresh_account_avatar(self, platform: str | None = None, *_):
+        platform = platform or self._current_platform
+        adapter = self._adapters.get(platform)
+        avatar = ""
+        if adapter is not None:
+            avatar = (
+                getattr(adapter, "_my_avatar", "")
+                or getattr(adapter, "_my_avatar_url", "")
+                or ""
+            )
+        if platform == self._current_platform:
+            self.chat.set_account_avatar(avatar)
+
     def _on_platform_switch(self, platform: str):
         self._current_platform = platform
+        self.refresh_account_avatar(platform)
         # 切换到非 IM 平台时，清除 Markdown 视图回到正常模式
         if platform not in _IM_UNAVAILABLE:
             self.chat.clear_markdown()
@@ -125,6 +145,7 @@ class HomePage(QWidget):
             None,
         )
         peer_avatar_url = session.avatar_url if session else ""
+        self.refresh_account_avatar(self._current_platform)
         self.chat.set_conversation(session_id, peer_avatar_url)
         self.chat.set_history_available(self._history_has_more.get(session_id, False))
         self.chat.load_messages(peer_name, msgs, peer_avatar_url)

@@ -439,6 +439,7 @@ class MainWindow(QMainWindow):
         self._auth_ctrl = AuthController(
             self.config, self.plugins, self.bus, self.sidebar,
             self.page_login, self.stack, self._adapter_mgr)
+        self.page_home.set_adapters(self._adapters)
 
         SignalWiring.connect_all(self, self._adapter_mgr, self._auth_ctrl)
         # AI 连接测试结果信号（跨线程安全）

@@ -38,6 +38,7 @@ class DouyinAdapter(BaseAdapter):
         self._client = None
         self._my_uid: str = ""
         self._my_name = ""
+        self._my_avatar = ""
         self._replied: set[str] = set()
         self._replied_order: deque[str] = deque()
         self._stop_event = threading.Event()
@@ -91,7 +92,7 @@ class DouyinAdapter(BaseAdapter):
                 return False
             self._auth = self._client.auth
             self._my_uid = self._client.uid
-            self._my_name = self._fetch_my_name()
+            self._my_name, self._my_avatar = self._fetch_my_profile()
             if not self._my_name:
                 logger.warning("  连接: 无法获取昵称，Cookie 可能已过期")
                 self.bus.set_platform_status("douyin", "Cookie 已过期", "请重新扫码登录")
@@ -149,6 +150,10 @@ class DouyinAdapter(BaseAdapter):
         self._replied.add(key)
 
     def _fetch_my_name(self) -> str:
+        return self._fetch_my_profile()[0]
+
+    def _fetch_my_profile(self) -> tuple[str, str]:
+        """读取当前抖音账号昵称和头像，失败时返回空值。"""
         try:
             import requests
             resp = requests.get(
@@ -157,10 +162,20 @@ class DouyinAdapter(BaseAdapter):
                          "Referer": "https://creator.douyin.com/"},
                 timeout=15, verify=False)
             if resp.status_code == 200:
-                return resp.json().get("user", {}).get("nickname", "")
+                user = resp.json().get("user", {}) or {}
+                avatar_obj = (
+                    user.get("avatar_larger") or user.get("avatar_medium")
+                    or user.get("avatar_thumb") or {}
+                )
+                avatar = (
+                    list(avatar_obj.get("url_list", []))[0]
+                    if avatar_obj.get("url_list") else
+                    user.get("avatar_url", "") or user.get("avatar", "")
+                )
+                return user.get("nickname", ""), avatar
         except Exception:
             pass
-        return ""
+        return "", ""
 
     # ── 发送 ──
 

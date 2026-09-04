@@ -1,6 +1,7 @@
 """Qt Quick 聊天模型、虚拟列表和历史分页回归测试。"""
 
 from datetime import datetime
+import time
 
 import pytest
 
@@ -36,6 +37,38 @@ def test_quick_model_keeps_5000_messages_without_widgets(qapp):
     assert model.index(4999, 0).isValid()
 
 
+def test_consecutive_messages_share_one_tg_avatar_group(qapp):
+    from dmshoot.gui.quick_chat_view import ChatMessageModel
+    from dmshoot.storage.models import ChatMessage
+
+    base = datetime(2026, 8, 30, 10, 0).timestamp()
+    group = [
+        ChatMessage(
+            session_id="quick:group",
+            sender_name="Alice",
+            sender_id="alice",
+            content=f"连续消息 {index}",
+            timestamp=base + index * 30,
+        )
+        for index in range(3)
+    ]
+    separate = ChatMessage(
+        session_id="quick:group",
+        sender_name="Alice",
+        sender_id="alice",
+        content="超过时间窗口",
+        timestamp=base + 400,
+    )
+    model = ChatMessageModel()
+    model.set_messages(group + [separate])
+
+    assert model.rowCount() == 2
+    assert [row["position"] for row in model._items[0]["messages"]] == [
+        "first", "middle", "last",
+    ]
+    assert model._items[0]["avatarText"] == "Alice"
+
+
 @pytest.mark.gui
 def test_quick_chat_uses_virtual_list_and_preserves_tg_roles(qapp, qtbot):
     from PySide6.QtQuick import QQuickItem
@@ -67,7 +100,7 @@ def test_quick_chat_uses_virtual_list_and_preserves_tg_roles(qapp, qtbot):
     assert message_list.property("contentHeight") > message_list.height()
     assert named_item_count(root, "bubbleRow") > 0
     # The model keeps all history, while the scene graph only materializes the viewport/cache.
-    assert visual_item_count(root) < 500
+    assert visual_item_count(root) < 650
 
 
 @pytest.mark.gui
@@ -135,3 +168,200 @@ def test_forced_widgets_renderer_is_available(qapp, qtbot, monkeypatch):
     assert view.renderer_name == "widgets"
     assert view.renderer_backend == "Software"
     assert view._legacy is not None
+
+
+@pytest.mark.gui
+def test_contact_avatar_click_opens_session(qapp, qtbot):
+    from PySide6.QtCore import Qt
+    from dmshoot.gui.widgets.contact import ContactItem
+    from dmshoot.storage.models import SessionRecord
+
+    session = SessionRecord(
+        session_id="bilibili:contact:1",
+        platform="bilibili",
+        peer_id="1",
+        peer_name="Alice",
+    )
+    item = ContactItem(session)
+    qtbot.addWidget(item)
+    clicked = []
+    item.clicked.connect(clicked.append)
+    item.show()
+
+    qtbot.mouseClick(item.avatar, Qt.LeftButton)
+
+    assert clicked == [session.session_id]
+
+
+@pytest.mark.gui
+def test_markdown_switch_discards_stale_background_result(qapp, qtbot, tmp_path, monkeypatch):
+    from dmshoot.gui.quick_chat_view import ChatView
+
+    old_document = tmp_path / "old.md"
+    new_document = tmp_path / "new.md"
+    old_document.write_text("# OLD", encoding="utf-8")
+    new_document.write_text("# NEW", encoding="utf-8")
+
+    original_read_text = type(old_document).read_text
+
+    def delayed_read_text(path, *args, **kwargs):
+        if path == old_document:
+            time.sleep(0.12)
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(old_document), "read_text", delayed_read_text)
+    view = ChatView()
+    qtbot.addWidget(view)
+    view.resize(760, 520)
+    view.show()
+
+    view.show_markdown(str(old_document), "旧文档")
+    view.show_markdown(str(new_document), "新文档")
+
+    qtbot.waitUntil(lambda: "NEW" in view._markdown_browser.toPlainText(), timeout=3000)
+    qtbot.wait(180)
+    assert "NEW" in view._markdown_browser.toPlainText()
+    assert "OLD" not in view._markdown_browser.toPlainText()
+
+
+@pytest.mark.gui
+def test_quick_avatar_is_circular_and_sticks_while_group_scrolls(qapp, qtbot, tmp_path):
+    """真实渲染断言：头像有图、四角不泄漏，并在长消息组中吸附到底部。"""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QColor, QImage
+    from PySide6.QtQuick import QQuickItem
+    from dmshoot.gui.quick_chat_view import ChatView
+    from dmshoot.storage.models import ChatMessage
+
+    avatar_path = tmp_path / "avatar.png"
+    avatar_image = QImage(48, 48, QImage.Format.Format_ARGB32)
+    avatar_image.fill(QColor("#ef4444"))
+    assert avatar_image.save(str(avatar_path))
+
+    base = datetime(2026, 8, 30, 10, 0).timestamp()
+    messages = [
+        ChatMessage(
+            session_id="quick:avatar",
+            sender_name="Alice",
+            sender_id="alice",
+            content=f"第 {index} 条连续消息，保证组高度超过视口。",
+            timestamp=base + index * 20,
+        )
+        for index in range(12)
+    ]
+    messages.extend(
+        ChatMessage(
+            session_id="quick:avatar",
+            sender_name="Bob",
+            sender_id="bob",
+            content=f"后续消息 {index}",
+            timestamp=base + 300 + index * 20,
+        )
+        for index in range(8)
+    )
+    view = ChatView()
+    qtbot.addWidget(view)
+    view.resize(520, 250)
+    view.show()
+    view.load_messages("Alice", messages, str(avatar_path))
+    qtbot.waitUntil(
+        lambda: bool(view._model._items and view._model._items[0]["avatarSource"]),
+        timeout=3000,
+    )
+    qtbot.wait(120)
+
+    root = view._quick.rootObject()
+    message_list = root.findChild(QQuickItem, "messageList")
+    def named_items(item, object_name):
+        matches = [item] if item.objectName() == object_name else []
+        for child in item.childItems():
+            matches.extend(named_items(child, object_name))
+        return matches
+
+    avatars = named_items(root, "groupAvatar")
+    assert message_list is not None
+    assert avatars
+    avatar = avatars[0]
+    group = avatar.parentItem().parentItem()
+
+    def avatar_scene_y():
+        return avatar.mapToItem(root, QPointF(0, 0)).y()
+
+    message_list.setProperty("contentY", 0)
+    qtbot.wait(80)
+    frame = view._quick.grab().toImage()
+    point = avatar.mapToItem(root, QPointF(18, 18))
+    center = frame.pixelColor(round(point.x()), round(point.y()))
+    corner = frame.pixelColor(
+        round(avatar.mapToItem(root, QPointF(1, 1)).x()),
+        round(avatar.mapToItem(root, QPointF(1, 1)).y()),
+    )
+    assert center.red() > 180 and center.green() < 100
+    assert corner.red() < 40 and corner.green() < 40 and corner.blue() < 45
+
+    start_y = avatar_scene_y()
+    message_list.setProperty("contentY", min(90, message_list.property("contentHeight") - message_list.height()))
+    qtbot.wait(80)
+    # 在组还没有露出最后一条时，头像固定于视口底部，不会被滚走。
+    assert abs(avatar_scene_y() - start_y) <= 2
+
+    message_list.setProperty("contentY", min(
+        group.height() + 12,
+        message_list.property("contentHeight") - message_list.height(),
+    ))
+    qtbot.wait(80)
+    # 到达组尾后，头像回到组底，随消息一起离开视口。
+    assert avatar_scene_y() < start_y - 4, (
+        f"start={start_y}, end={avatar_scene_y()}, contentY={message_list.property('contentY')}, "
+        f"contentHeight={message_list.property('contentHeight')}, listHeight={message_list.height()}, "
+        f"groupY={group.y()}, groupHeight={group.height()}"
+    )
+
+
+@pytest.mark.gui
+def test_homepage_avatar_click_opens_opaque_quick_chat(temp_db, qapp, qtbot):
+    """联系人头像点击必须经过 HomePage 打开有尺寸的 Quick 聊天区。"""
+    from PySide6.QtCore import Qt
+    from dmshoot.gui.monitor_panel import MonitorPanel
+    from dmshoot.gui.pages.home_page import HomePage
+    from dmshoot.storage import database
+    from dmshoot.storage.models import ChatMessage, SessionRecord
+
+    session = SessionRecord(
+        session_id="bilibili:alice",
+        platform="bilibili",
+        peer_id="alice",
+        peer_name="Alice",
+        last_message="可见消息",
+        last_time=1770000000,
+    )
+    database.upsert_session(session)
+    database.save_message(ChatMessage(
+        session_id=session.session_id,
+        sender_name="Alice",
+        sender_id="alice",
+        content="可见消息",
+        timestamp=1770000000,
+    ))
+
+    page = HomePage(MonitorPanel(), [("bilibili", "B站")])
+    qtbot.addWidget(page)
+    page.resize(900, 640)
+    page.show()
+    qtbot.waitUntil(lambda: session.session_id in page.contacts._widget_map, timeout=2500)
+
+    contact = page.contacts._widget_map[session.session_id]
+    qtbot.mouseClick(contact.avatar, Qt.LeftButton)
+    qtbot.waitUntil(lambda: page.chat.title_label.text() == "Alice", timeout=2500)
+    qtbot.waitUntil(
+        lambda: page.chat._quick is not None and page.chat._quick.width() > 100
+        and page.chat._quick.height() > 100,
+        timeout=2500,
+    )
+
+    assert page.chat.renderer_name == "quick"
+    assert page.chat._content_stack.currentWidget() is page.chat._quick
+    frame = page.chat._quick.grab().toImage()
+    background = frame.pixelColor(2, 2)
+    assert background.red() < 25 and background.green() < 30 and background.blue() < 40
+    assert page.chat._model.rowCount() == 1

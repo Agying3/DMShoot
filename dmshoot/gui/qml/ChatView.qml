@@ -1,9 +1,12 @@
 import QtQuick 2.15
 import QtQuick.Shapes 1.15
 
-Item {
+Rectangle {
     id: chatRoot
     objectName: "quickChatRoot"
+    // QQuickWidget 默认的 FBO 可能是透明的；聊天页必须自己填满底色，
+    // 否则首屏无消息时会透出主窗口下层页面。
+    color: "#10141D"
 
     signal historyRequested()
     signal bottomStateChanged(bool atBottom)
@@ -43,10 +46,17 @@ Item {
         newMessageCount = 0
         historyPending = false
         suppressHistory = true
-        messageList.positionViewAtEnd()
         Qt.callLater(function() {
-            suppressHistory = false
-            updateBottomState()
+            // 模型刚重置时 delegate 还没有完成文本测量；等待两轮事件循环，
+            // 才能根据最终 contentHeight 定位到最后一条，避免首帧大片空白。
+            messageList.forceLayout()
+            messageList.positionViewAtEnd()
+            Qt.callLater(function() {
+                messageList.forceLayout()
+                messageList.positionViewAtEnd()
+                suppressHistory = false
+                updateBottomState()
+            })
         })
     }
 
@@ -209,7 +219,8 @@ Item {
             id: group
             objectName: "messageGroup"
             width: parent ? parent.width : 0
-            height: stack.height
+            // 不能让短气泡把 36px 头像裁掉或压到下一组上。
+            height: Math.max(avatarSize, stack.height)
             property bool outgoing: parent ? parent.itemIsSelf : false
             property real avatarSize: 36
             property string senderName: parent ? parent.itemSenderName : ""
@@ -217,32 +228,43 @@ Item {
             property string avatarSource: parent ? parent.itemAvatarSource : ""
             property var rows: JSON.parse(parent ? (parent.itemMessagesJson || "[]") : "[]")
             property int rowCount: rows ? rows.length : 0
+            // group.y 是 Loader 内局部坐标。先映射到 ListView 的 contentItem
+            // 再扣除 contentY，才是视口中的真实位置；这会让头像在组尾之后
+            // 随消息向上离开，而不是永远钉死在视口底部。
+            property real visibleGroupTop: group.mapToItem(
+                messageList.contentItem, 0, 0
+            ).y - messageList.contentY
 
             Item {
                 id: avatarSlot
                 width: 52
                 height: group.height
                 x: group.outgoing ? group.width - width : 0
-                visible: !group.outgoing
+                visible: true
 
                 Rectangle {
                     id: avatarFrame
+                    objectName: "groupAvatar"
                     width: group.avatarSize
                     height: group.avatarSize
                     x: (parent.width - width) / 2
-                    y: Math.max(0, Math.min(group.height - height,
-                        messageList.contentY + messageList.height - height - 4 - group.y))
                     radius: width / 2
                     color: "#394B63"
-                    clip: true
+                    // 头像默认贴在组底；组靠近视口底部时随消息向上顶，
+                    // 但永远不会越过本组顶部或落到下一组。
+                    y: Math.max(0, Math.min(group.height - height,
+                        messageList.height - height - 4 - group.visibleGroupTop))
 
                     Image {
+                        id: avatarImage
                         anchors.fill: parent
-                        visible: group.avatarSource !== ""
                         source: group.avatarSource
                         fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
+                        // Python 已在后台缓存 72px 圆形 PNG，QML 不再为每组
+                        // 创建遮罩效果器，也不会让未加载的网络图泄漏成方形。
+                        asynchronous: false
                         cache: true
+                        visible: group.avatarSource !== ""
                     }
                     Text {
                         anchors.fill: parent

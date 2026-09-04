@@ -57,6 +57,7 @@ class BilibiliAdapter(BaseAdapter):
         self._ac_time_value = bilibili_ac_time_value
         self._credential = None
         self._my_uid: int = 0
+        self._my_avatar: str = ""
         self._state = _load_state()
         self._replied: set[int] = set(self._state.get("replied", []))
         self._session_last_seq: dict[int, int] = {}
@@ -106,6 +107,7 @@ class BilibiliAdapter(BaseAdapter):
             info = bsync(user.get_self_info(self._credential))
             self._my_uid = info.get("mid", 0) if isinstance(info, dict) else 0
             self._my_name = info.get("name", "") if isinstance(info, dict) else ""
+            self._my_avatar = info.get("face", "") if isinstance(info, dict) else ""
             logger.success(f"B站已连接: UID={self._my_uid}, 昵称={self._my_name}")
             return True
         except Exception as e:

@@ -26,6 +26,7 @@ BUBBLE_RADIUS = 13
 SEAM_RADIUS = 4
 GROUP_SPACING = 9
 MESSAGE_SEAM = 2
+GROUP_TIME_WINDOW = 5 * 60
 MAX_BUBBLE_WIDTH = 480
 BUBBLE_FONT_FAMILY = "Microsoft YaHei"
 BUBBLE_FONT_SIZE = 16
@@ -77,6 +78,17 @@ def _group_key(message: ChatMessage) -> tuple[str, bool, date | None]:
     return _sender_key(message), _message_is_self(message), _message_date(message)
 
 
+def _can_join_group(previous: ChatMessage, current: ChatMessage) -> bool:
+    """Telegram 风格分组：身份、方向、日期相同且间隔较短才合并。"""
+    if _group_key(previous) != _group_key(current):
+        return False
+    previous_ts = previous.timestamp or 0
+    current_ts = current.timestamp or 0
+    if previous_ts > 0 and current_ts > 0:
+        return abs(current_ts - previous_ts) <= GROUP_TIME_WINDOW
+    return True
+
+
 def _group_messages(messages: list[ChatMessage]) -> list[list[ChatMessage]]:
     """按相邻发送者、方向和日期分组，日期变化会强制断组。"""
     groups: list[list[ChatMessage]] = []
@@ -84,7 +96,7 @@ def _group_messages(messages: list[ChatMessage]) -> list[list[ChatMessage]]:
     previous_key = None
     for message in messages:
         key = _group_key(message)
-        if current and key != previous_key:
+        if current and not _can_join_group(current[-1], message):
             groups.append(current)
             current = []
         current.append(message)
@@ -565,13 +577,20 @@ class BubbleRowWidget(QWidget):
 class MessageGroupWidget(QWidget):
     """一个发送者在同一天连续发送的消息组，头像独立于消息栈滚动。"""
 
-    def __init__(self, messages: list[ChatMessage], peer_avatar_url: str = "", parent=None):
+    def __init__(
+        self,
+        messages: list[ChatMessage],
+        peer_avatar_url: str = "",
+        parent=None,
+        my_avatar_url: str = "",
+    ):
         super().__init__(parent)
         # 组只在横向填满聊天区，纵向保持气泡栈的自然高度，避免和底部 stretch 平分空白。
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self._messages: list[ChatMessage] = []
         self._group_key = None
         self._peer_avatar_url = peer_avatar_url
+        self._my_avatar_url = my_avatar_url
         self._bubble_rows: list[BubbleRowWidget] = []
         self._sender_labels: list[QLabel] = []
         self._avatar_y: int | None = None
@@ -592,7 +611,7 @@ class MessageGroupWidget(QWidget):
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(0)
 
-        self.rebind(messages, peer_avatar_url)
+        self.rebind(messages, peer_avatar_url, self._my_avatar_url)
 
     @property
     def group_key(self):
@@ -607,13 +626,19 @@ class MessageGroupWidget(QWidget):
         return _message_date(self._messages[-1]) if self._messages else None
 
     def can_append(self, message: ChatMessage) -> bool:
-        return bool(self._messages and _group_key(message) == self._group_key)
+        return bool(self._messages and _can_join_group(self._messages[-1], message))
 
-    def rebind(self, messages: list[ChatMessage], peer_avatar_url: str = ""):
+    def rebind(
+        self,
+        messages: list[ChatMessage],
+        peer_avatar_url: str = "",
+        my_avatar_url: str = "",
+    ):
         self.setMinimumHeight(0)
         self._avatar_y = None
         self._messages = list(messages)
         self._peer_avatar_url = peer_avatar_url or self._peer_avatar_url
+        self._my_avatar_url = my_avatar_url or self._my_avatar_url
         self._group_key = _group_key(self._messages[0]) if self._messages else None
         self._clear_stack()
 
@@ -624,7 +649,7 @@ class MessageGroupWidget(QWidget):
         sender_name = first.sender_name or ("AI" if first.is_auto else "")
         avatar_text = ("AI" if first.is_auto else "我") if is_self else (sender_name or "?")
         self.avatar.set_text(avatar_text)
-        self.avatar.set_avatar("" if is_self else self._peer_avatar_url)
+        self.avatar.set_avatar(self._my_avatar_url if is_self else self._peer_avatar_url)
 
         if not is_self and sender_name:
             name_label = QLabel(sender_name)
@@ -665,7 +690,7 @@ class MessageGroupWidget(QWidget):
         if not self.can_append(message):
             return False
         self._messages.append(message)
-        self.rebind(self._messages, self._peer_avatar_url)
+        self.rebind(self._messages, self._peer_avatar_url, self._my_avatar_url)
         return True
 
     def set_max_width(self, width: int, refresh: bool = True):
@@ -830,6 +855,7 @@ class ChatView(QWidget):
 
         self._conversation_id = ""
         self._peer_avatar_url = ""
+        self._my_avatar_url = ""
         self._content_items: list[QWidget] = []
         self._display_messages: list[ChatMessage] = []
         self._new_message_count = 0
@@ -858,6 +884,12 @@ class ChatView(QWidget):
     def set_conversation(self, conversation_id: str, peer_avatar_url: str = ""):
         self._conversation_id = conversation_id or ""
         self._peer_avatar_url = peer_avatar_url or ""
+
+    def set_account_avatar(self, avatar_url: str = ""):
+        """更新当前账号头像，并立即刷新已显示的消息组。"""
+        self._my_avatar_url = avatar_url or ""
+        if self._display_messages:
+            self._render_message_items(self._display_messages, preserve_scroll=True)
 
     def set_font_mode(self, mode: str):
         """切换聊天字体并重新测量已显示的气泡。"""
@@ -978,13 +1010,21 @@ class ChatView(QWidget):
     # 保留旧方法的兼容常量；打开会话已不再启动历史分批加载。
     HISTORY_CHUNK = 4
 
-    def load_messages(self, title: str, messages: list[ChatMessage], peer_avatar_url: str = ""):
+    def load_messages(
+        self,
+        title: str,
+        messages: list[ChatMessage],
+        peer_avatar_url: str = "",
+        my_avatar_url: str = "",
+    ):
         """一次性加载当前消息窗口，避免用户看到历史分批重排的中间态。"""
         self.title_icon.hide()
         self._reset_new_message_notice()
         self.title_label.setText(title)
         if peer_avatar_url:
             self._peer_avatar_url = peer_avatar_url
+        if my_avatar_url:
+            self._my_avatar_url = my_avatar_url
         if self._md_browser or self._placeholder:
             self._clear_content()
         self._history_timer.stop()
@@ -1031,13 +1071,16 @@ class ChatView(QWidget):
             group_key = _group_key(group_messages[0])
             if isinstance(old, MessageGroupWidget) and old.group_key == group_key:
                 group = old
-                group.rebind(group_messages, self._peer_avatar_url)
+                group.rebind(
+                    group_messages, self._peer_avatar_url, self._my_avatar_url
+                )
                 old_index += 1
             else:
                 group = MessageGroupWidget(
                     group_messages,
                     self._peer_avatar_url,
                     self.bubble_container,
+                    self._my_avatar_url,
                 )
                 group.set_font_families(self._content_family, self._meta_family)
             target_items.append(group)
@@ -1118,7 +1161,8 @@ class ChatView(QWidget):
                     )
                     self._content_items.append(separator)
                 group = MessageGroupWidget(
-                    [message], self._peer_avatar_url, self.bubble_container
+                    [message], self._peer_avatar_url, self.bubble_container,
+                    self._my_avatar_url,
                 )
                 group.set_font_families(self._content_family, self._meta_family)
                 self.bubble_layout.insertWidget(

@@ -164,8 +164,17 @@ async def login_via_playwright(callback=None) -> dict[str, str]:
                     text = await name_el.text_content()
                     if text and len(text.strip()) < 50:
                         user_name = text.strip()
+                avatar_el = await page.query_selector(
+                    'meta[property="og:image"], img[class*="avatar"], img[class*="Avatar"]'
+                )
+                if avatar_el:
+                    my_avatar = await avatar_el.get_attribute("content")
+                    if not my_avatar:
+                        my_avatar = await avatar_el.get_attribute("src")
+                else:
+                    my_avatar = ""
             except:
-                pass
+                my_avatar = ""
 
             # 同时访问 live.kuaishou.com 获取直播域 Cookie
             page2 = await context.new_page()
@@ -185,6 +194,7 @@ async def login_via_playwright(callback=None) -> dict[str, str]:
                     cookie_dict[c["name"]] = c["value"]
             # 保存昵称
             cookie_dict["_user_name"] = user_name or ""
+            cookie_dict["_user_avatar"] = my_avatar or ""
 
             _debug(f"login_via_playwright: {len(cookie_dict)} cookies")
             if not cookie_dict:
@@ -276,7 +286,7 @@ class KuaishouAdapter(BaseAdapter):
 
         self._my_uid = uid
         self._my_name = self._cookie.get("_user_name", "") or f"快手用户{uid}"
-        self._my_avatar = ""
+        self._my_avatar = self._cookie.get("_user_avatar", "") or ""
 
         _debug(f"connect OK: uid={self._my_uid}")
         logger.success(f"快手已连接: {self._my_name}({self._my_uid})")

@@ -36,6 +36,7 @@ dmshoot/data/*_debug.txt
 dmshoot/data/*_probe.*
 dmshoot/data/*_captured.*
 dmshoot/data/startup_log.*
+dmshoot/data/avatars/
 
 # AI 角色提示词（仅排除圡泬和柁炑）
 prompts/圡泬.txt

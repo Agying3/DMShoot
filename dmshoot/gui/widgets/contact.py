@@ -79,6 +79,8 @@ class ContactItem(QFrame):
         self.avatar.setObjectName("contactAvatar")
         self.avatar.setFixedSize(44, 44)
         self.avatar.setAlignment(Qt.AlignCenter)
+        # 头像属于联系人点击区域；让事件落到 ContactItem，避免点头像时不打开会话。
+        self.avatar.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         layout.addWidget(self.avatar)
 
         # AI 按钮
@@ -99,8 +101,10 @@ class ContactItem(QFrame):
         info.setSpacing(3)
         name = QLabel(session.peer_name or f"用户{session.peer_id}")
         name.setObjectName("contactName")
+        name.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         last = QLabel(session.last_message[:30] if session.last_message else "")
         last.setObjectName("contactLast")
+        last.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         info.addWidget(name)
         info.addWidget(last)
         layout.addLayout(info, stretch=1)
@@ -138,6 +142,7 @@ class ContactItem(QFrame):
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.session_id)
+        event.accept()
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.Enter:
@@ -263,7 +268,7 @@ class ContactList(QWidget):
 
         self.list = QListWidget()
         self.list.setObjectName("contactList")
-        self.list.itemClicked.connect(self._on_click)
+        # ContactItem 自己负责发出点击信号，避免一次点击触发两次会话加载。
         self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.list.setStyleSheet(

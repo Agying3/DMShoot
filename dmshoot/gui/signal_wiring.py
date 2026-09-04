@@ -24,5 +24,6 @@ class SignalWiring:
         mw.bus.new_message.connect(mw._on_new_message)
         mw.bus.session_updated.connect(mw.page_home.refresh_session)
         mw.bus.platform_status.connect(auth_ctrl.on_platform_status)
+        mw.bus.platform_status.connect(mw.page_home.refresh_account_avatar)
         mw.bus.ai_response.connect(mw._on_ai_response)
         mw.bus.log.connect(mw._on_bus_log)
