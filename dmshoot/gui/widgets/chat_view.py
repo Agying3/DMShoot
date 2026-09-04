@@ -768,15 +768,13 @@ class MessageGroupWidget(QWidget):
         self._avatar_y = y
         self.avatar.move((AVATAR_SLOT_WIDTH - AVATAR_SIZE) // 2, y)
 
-    def update_avatar_position(self, scroll_top: int, viewport_height: int):
-        parent = self.parentWidget()
-        group_top = (
-            self.mapTo(parent, QPoint(0, 0)).y()
-            if parent is not None else self.y()
-        )
+    def update_avatar_position(self, viewport: QWidget, viewport_height: int):
+        # 直接读取组在 viewport 中的实际坐标，避免 scrollbar value、内容
+        # 容器边距和 QScrollArea frame 之间出现一像素到多像素的偏移。
+        group_top = self.mapTo(viewport, QPoint(0, 0)).y()
         max_offset = max(0, self.height() - AVATAR_SIZE)
         stick_vp = viewport_height - AVATAR_SIZE - AVATAR_STICK_BOTTOM
-        target = scroll_top + stick_vp - group_top
+        target = stick_vp - group_top
         y = max(0, min(target, max_offset))
         self._avatar_y = y
         self.avatar.move((AVATAR_SLOT_WIDTH - AVATAR_SIZE) // 2, y)
@@ -1238,10 +1236,9 @@ class ChatView(QWidget):
 
     def _update_avatar_positions(self):
         viewport = self.scroll.viewport()
-        scroll_top = self.scroll.verticalScrollBar().value()
         for item in self._content_items:
             if isinstance(item, MessageGroupWidget):
-                item.update_avatar_position(scroll_top, viewport.height())
+                item.update_avatar_position(viewport, viewport.height())
 
     def _defer(self, callback):
         """使用归属于视图的定时器，避免销毁后执行悬空的延迟回调。"""

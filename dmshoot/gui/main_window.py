@@ -870,7 +870,8 @@ class MainWindow(QMainWindow):
             database.save_message(rm)
             # 网络发送在后台完成，Qt 主线程只更新本地界面。
             self.page_home.add_message(session_id, persona, part, is_auto=True,
-                                       persona=persona, send_ok=bool(adapter))
+                                       persona=persona, sender_id="ai",
+                                       send_ok=bool(adapter))
 
         if adapter:
             from dmshoot.core.concurrency import ConcurrencyManager

@@ -17,6 +17,7 @@ from dmshoot.utils.console_log import get_logger
 logger = get_logger(__name__)
 
 DB_PATH = Path(__file__).parent.parent / "data" / "dmshoot.db"
+AI_ECHO_WINDOW = 15 * 60  # AI 本地回复与平台自发回显的最大匹配间隔
 
 # ── 持久连接（模块级单例，所有线程共享）──
 _conn: Optional[sqlite3.Connection] = None
@@ -185,6 +186,85 @@ def init_database():
 def _platform_from(session_id: str) -> str:
     """从 session_id 提取平台名: 'douyin:0:1:xxx' → 'douyin'"""
     return session_id.split(":")[0] if ":" in session_id else ""
+
+
+def _is_ai_echo_candidate(message: ChatMessage) -> bool:
+    """只把 AI 本地消息和平台自发回显视为可合并的一对。"""
+    return bool(
+        message.content
+        and ((message.is_auto and not message.is_self)
+             or (message.is_self and not message.is_auto))
+    )
+
+
+def _has_ai_echo(conn: sqlite3.Connection, message: ChatMessage) -> bool:
+    """查询同一会话中是否已经存在另一方向的 AI 回显。"""
+    if not _is_ai_echo_candidate(message):
+        return False
+    timestamp = float(message.timestamp or 0)
+    row = conn.execute("""
+        SELECT 1 FROM messages
+        WHERE session_id = ?
+          AND content = ?
+          AND is_auto = ?
+          AND is_self = ?
+          AND timestamp BETWEEN ? AND ?
+        LIMIT 1
+    """, (
+        message.session_id,
+        message.content,
+        int(message.is_self),
+        int(message.is_auto),
+        timestamp - AI_ECHO_WINDOW,
+        timestamp + AI_ECHO_WINDOW,
+    )).fetchone()
+    return row is not None
+
+
+def _messages_are_duplicates(left: ChatMessage, right: ChatMessage) -> bool:
+    if left.session_id != right.session_id:
+        return False
+    if left.message_key and right.message_key:
+        return left.message_key == right.message_key
+    if (
+        not left.message_key
+        and not right.message_key
+        and left.sender_id == right.sender_id
+        and left.content == right.content
+        and left.is_self == right.is_self
+        and left.is_auto == right.is_auto
+        and abs((left.timestamp or 0) - (right.timestamp or 0)) < 0.001
+    ):
+        return True
+    if not (_is_ai_echo_candidate(left) and _is_ai_echo_candidate(right)):
+        return False
+    return (
+        left.content == right.content
+        and left.is_auto != right.is_auto
+        and left.is_self != right.is_self
+        and abs((left.timestamp or 0) - (right.timestamp or 0)) <= AI_ECHO_WINDOW
+    )
+
+
+def deduplicate_messages(messages: list[ChatMessage]) -> list[ChatMessage]:
+    """清理历史中已存在的重复服务端键和 AI 平台回显。"""
+    result: list[ChatMessage] = []
+    for message in messages:
+        duplicate_index = next(
+            (
+                index for index in range(len(result) - 1, -1, -1)
+                if _messages_are_duplicates(result[index], message)
+            ),
+            None,
+        )
+        if duplicate_index is None:
+            result.append(message)
+            continue
+        # AI 本地消息包含 persona，优先保留它的显示身份和头像方向。
+        existing = result[duplicate_index]
+        if message.is_auto and not existing.is_auto:
+            result[duplicate_index] = message
+    return result
 
 
 # ── 会话操作 ──
@@ -378,6 +458,10 @@ def save_message(msg: ChatMessage) -> bool:
     _start = _time.perf_counter()
     conn = _get_conn()
     with _lock:
+        # AI 回复先在本地展示并落库，平台稍后可能再回显一份 is_self 消息。
+        # 两者没有相同的服务端 ID，只能用会话、正文、方向和短时间窗口合并。
+        if _has_ai_echo(conn, msg):
+            return False
         cur = conn.execute("""
             INSERT OR IGNORE INTO messages (session_id, platform, sender_name, sender_id,
                 content, msg_type, is_self, is_auto, persona, timestamp, message_key)
@@ -508,17 +592,38 @@ def save_messages_batch(msgs: list[ChatMessage]) -> int:
     _start = _time.perf_counter()
     conn = _get_conn()
     with _lock:
+        normal_msgs = [m for m in msgs if not _is_ai_echo_candidate(m)]
+        # 同一批次内也优先写入 AI 本地记录，再过滤随后出现的平台回显。
+        echo_msgs = sorted(
+            (m for m in msgs if _is_ai_echo_candidate(m)),
+            key=lambda m: not m.is_auto,
+        )
         data = [
             (m.session_id, _platform_from(m.session_id),
              m.sender_name, m.sender_id, m.content,
              m.msg_type, int(m.is_self), int(m.is_auto), m.persona, m.timestamp, m.message_key)
-            for m in msgs
+            for m in normal_msgs
         ]
         cur = conn.executemany("""
             INSERT OR IGNORE INTO messages (session_id, platform, sender_name, sender_id,
                 content, msg_type, is_self, is_auto, persona, timestamp, message_key)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, data)
+        """, data) if data else None
+        written = cur.rowcount if cur is not None else 0
+        # 仅对可能是 AI 回显的极少数消息做匹配查询，保留普通历史同步的批量写入性能。
+        for m in echo_msgs:
+            if _has_ai_echo(conn, m):
+                continue
+            cur = conn.execute("""
+                INSERT OR IGNORE INTO messages (session_id, platform, sender_name, sender_id,
+                    content, msg_type, is_self, is_auto, persona, timestamp, message_key)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                m.session_id, _platform_from(m.session_id), m.sender_name, m.sender_id,
+                m.content, m.msg_type, int(m.is_self), int(m.is_auto), m.persona,
+                m.timestamp, m.message_key,
+            ))
+            written += cur.rowcount
         conn.commit()
     _elapsed = (_time.perf_counter() - _start) * 1000
     try:
@@ -526,7 +631,7 @@ def save_messages_batch(msgs: list[ChatMessage]) -> int:
         get_monitor().record_db_write(_elapsed)
     except Exception:
         pass
-    return cur.rowcount
+    return written
 
 
 def get_messages(session_id: str, limit: int = 50) -> list[ChatMessage]:
@@ -536,7 +641,7 @@ def get_messages(session_id: str, limit: int = 50) -> list[ChatMessage]:
         SELECT * FROM messages WHERE session_id=?
         ORDER BY timestamp DESC, id DESC LIMIT ?
     """, (session_id, limit)).fetchall()
-    return [_row_to_message(r) for r in reversed(rows)]
+    return deduplicate_messages([_row_to_message(r) for r in reversed(rows)])
 
 
 def get_messages_before(
@@ -559,7 +664,7 @@ def get_messages_before(
             WHERE session_id=? AND timestamp < ?
             ORDER BY timestamp DESC, id DESC LIMIT ?
         """, (session_id, before_timestamp, limit)).fetchall()
-    return [_row_to_message(r) for r in reversed(rows)]
+    return deduplicate_messages([_row_to_message(r) for r in reversed(rows)])
 
 
 def get_messages_by_platform(platform: str, limit: int = 100) -> list[ChatMessage]:

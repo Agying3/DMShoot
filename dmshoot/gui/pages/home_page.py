@@ -132,7 +132,10 @@ class HomePage(QWidget):
         self._current_session = session_id
         database.reset_unread(session_id)  # 进入会话时清零未读
         self._msg_cache.pop(session_id, None)
-        msgs = database.get_messages(session_id, limit=self.MESSAGE_PAGE_SIZE)
+        # 兼容旧版本已经写入的“AI本地回复 + 平台自发回显”双记录。
+        msgs = database.deduplicate_messages(
+            database.get_messages(session_id, limit=self.MESSAGE_PAGE_SIZE)
+        )
         self._msg_cache[session_id] = msgs
         self._history_has_more[session_id] = len(msgs) >= self.MESSAGE_PAGE_SIZE
         if msgs:
@@ -211,24 +214,12 @@ class HomePage(QWidget):
         )
         # 维护缓存（按时间排序，保证 oldest first）
         cache = self._msg_cache.get(session_id, [])
-        # 服务端 ID 精确去重；无 ID 时只过滤同一时刻的同一条事件。
-        if message_key:
-            dup = any(m.message_key == message_key for m in cache[-50:])
-        else:
-            dup = any(
-                m.sender_id == sender_id and m.content == content and
-                m.is_self == is_self and m.is_auto == is_auto and
-                abs(m.timestamp - ts) < 0.001
-                for m in cache[-15:]
-            )
-        if dup:
+        merged = database.deduplicate_messages(cache + [msg])
+        # 新消息被已有服务端键或 AI 平台回显命中时，不再重复推送气泡。
+        if len(merged) == len(cache):
+            self._msg_cache[session_id] = merged
             return
-        if cache and cache[-1].timestamp > ts:
-            cache.append(msg)
-            cache.sort(key=lambda m: m.timestamp)
-        else:
-            cache.append(msg)
-        self._msg_cache[session_id] = cache
+        self._msg_cache[session_id] = merged
         # 推气泡（如果在看这个会话）
         if self._current_session == session_id:
             self.chat.append_message(msg)

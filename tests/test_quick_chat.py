@@ -323,6 +323,64 @@ def test_quick_avatar_is_circular_and_sticks_while_group_scrolls(qapp, qtbot, tm
 
 
 @pytest.mark.gui
+def test_default_widget_avatar_is_at_group_tail_and_gets_pushed_up(qapp, qtbot):
+    """默认 QWidget 路径也必须执行 TG 头像的组尾吸附和上顶。"""
+    from PySide6.QtCore import QPoint
+    from dmshoot.gui.quick_chat_view import ChatView
+    from dmshoot.gui.widgets.chat_view import MessageGroupWidget
+    from dmshoot.storage.models import ChatMessage
+
+    base = datetime(2026, 8, 30, 10, 0).timestamp()
+    messages = [
+        ChatMessage(
+            session_id="widgets:avatar", sender_name="Alice", sender_id="alice",
+            content=f"连续消息 {index}，用于验证头像组尾定位。",
+            timestamp=base + index * 20,
+        )
+        for index in range(20)
+    ]
+    messages.append(ChatMessage(
+        session_id="widgets:avatar", sender_name="Bob", sender_id="bob",
+        content="后续打断消息", timestamp=base + 1000,
+    ))
+
+    view = ChatView()
+    qtbot.addWidget(view)
+    view.resize(520, 250)
+    view.show()
+    view.load_messages("Alice", messages)
+    qtbot.wait(150)
+
+    legacy = view._legacy
+    assert legacy is not None
+    groups = [item for item in legacy._content_items if isinstance(item, MessageGroupWidget)]
+    assert len(groups) == 2
+    first = groups[0]
+    viewport = legacy.scroll.viewport()
+    scrollbar = legacy.scroll.verticalScrollBar()
+
+    scrollbar.setValue(0)
+    qtbot.wait(80)
+
+    def avatar_scene_y():
+        return first.avatar.mapTo(viewport, QPoint(0, 0)).y()
+
+    group_scene_y = first.mapTo(viewport, QPoint(0, 0)).y()
+    expected_bottom = min(group_scene_y + first.height(), viewport.height() - 4)
+    assert abs(avatar_scene_y() + first.avatar.height() - expected_bottom) <= 2
+    start_y = avatar_scene_y()
+
+    stick_bottom = viewport.height() - first.avatar.height() - 4
+    push_scroll = first.y() + first.height() - stick_bottom + 20
+    scrollbar.setValue(min(scrollbar.maximum(), max(0, push_scroll)))
+    qtbot.wait(80)
+    assert avatar_scene_y() < start_y - 4, (
+        f"start={start_y}, end={avatar_scene_y()}, scroll={scrollbar.value()}, "
+        f"maximum={scrollbar.maximum()}, groupY={first.y()}, groupHeight={first.height()}"
+    )
+
+
+@pytest.mark.gui
 def test_homepage_avatar_click_opens_wallpaper_safe_chat(temp_db, qapp, qtbot):
     """联系人头像点击必须打开与主窗口壁纸共享合成链路的聊天区。"""
     from PySide6.QtCore import Qt

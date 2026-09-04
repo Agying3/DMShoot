@@ -270,6 +270,47 @@ class TestMessageHistory:
         assert database.save_message(second) is True
         assert len(database.get_messages("test:repeat")) == 2
 
+    def test_ai_local_reply_and_platform_echo_are_saved_once(self, temp_db):
+        """AI 本地落库后，平台回显的同一条自己消息不能再次落库。"""
+        from dmshoot.storage import database
+        from dmshoot.storage.models import ChatMessage
+
+        local = ChatMessage(
+            session_id="test:ai-echo", sender_name="AI", sender_id="ai",
+            content="晚安，爱睡不睡!", timestamp=1000.0, is_auto=True,
+        )
+        echo = ChatMessage(
+            session_id="test:ai-echo", sender_name="我", sender_id="999",
+            content="晚安，爱睡不睡!", timestamp=1004.0, is_self=True,
+        )
+
+        assert database.save_message(local) is True
+        assert database.save_message(echo) is False
+        history = database.get_messages("test:ai-echo")
+        assert len(history) == 1
+        assert history[0].is_auto is True
+
+    def test_ai_echo_is_deduplicated_in_history_batch(self, temp_db):
+        """历史批量同步同时遇到本地 AI 和平台回显时只保留一条。"""
+        from dmshoot.storage import database
+        from dmshoot.storage.models import ChatMessage
+
+        batch = [
+            ChatMessage(
+                session_id="test:ai-batch", sender_name="我", sender_id="999",
+                content="再见", timestamp=2004.0, is_self=True,
+            ),
+            ChatMessage(
+                session_id="test:ai-batch", sender_name="AI", sender_id="ai",
+                content="再见", timestamp=2000.0, is_auto=True,
+            ),
+        ]
+
+        assert database.save_messages_batch(batch) == 1
+        history = database.get_messages("test:ai-batch")
+        assert len(history) == 1
+        assert history[0].is_auto is True
+
     def test_server_message_key_deduplicates_repush(self, temp_db):
         """相同服务端消息 ID 即使内容或时间变化也只能写入一次。"""
         from dmshoot.storage import database
