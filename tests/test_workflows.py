@@ -270,6 +270,38 @@ class TestMessageHistory:
         assert database.save_message(second) is True
         assert len(database.get_messages("test:repeat")) == 2
 
+    def test_mixed_message_key_duplicate_is_saved_once(self, temp_db):
+        """同步重试时一条有 key、一条无 key 也不能形成两个气泡。"""
+        from dmshoot.storage import database
+        from dmshoot.storage.models import ChatMessage
+
+        first = ChatMessage(
+            session_id="test:mixed-key", sender_name="User", sender_id="1",
+            content="同一条消息", timestamp=1000.0, is_self=True,
+        )
+        retry = ChatMessage(
+            session_id="test:mixed-key", sender_name="User", sender_id="1",
+            content="同一条消息", timestamp=1000.0005, is_self=True,
+            message_key="bilibili:peer:123",
+        )
+
+        assert database.save_message(first) is True
+        assert database.save_message(retry) is False
+        assert len(database.get_messages("test:mixed-key")) == 1
+
+    def test_different_server_keys_are_not_duplicate(self, temp_db):
+        """不同服务端消息 ID 即使文案相同，也必须保留。"""
+        from dmshoot.storage import database
+        from dmshoot.storage.models import ChatMessage
+
+        for key in ("bilibili:peer:1", "bilibili:peer:2"):
+            assert database.save_message(ChatMessage(
+                session_id="test:different-keys", sender_name="User", sender_id="1",
+                content="相同文案", timestamp=1000.0, is_self=True,
+                message_key=key,
+            )) is True
+        assert len(database.get_messages("test:different-keys")) == 2
+
     def test_ai_local_reply_and_platform_echo_are_saved_once(self, temp_db):
         """AI 本地落库后，平台回显的同一条自己消息不能再次落库。"""
         from dmshoot.storage import database

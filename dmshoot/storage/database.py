@@ -17,7 +17,8 @@ from dmshoot.utils.console_log import get_logger
 logger = get_logger(__name__)
 
 DB_PATH = Path(__file__).parent.parent / "data" / "dmshoot.db"
-AI_ECHO_WINDOW = 15 * 60  # AI 本地回复与平台自发回显的最大匹配间隔
+AI_ECHO_WINDOW = 60  # AI 本地回复与平台自发回显的最大匹配间隔
+MESSAGE_DUPLICATE_TOLERANCE = 0.001  # 同步重试允许的时间戳误差
 
 # ── 持久连接（模块级单例，所有线程共享）──
 _conn: Optional[sqlite3.Connection] = None
@@ -221,19 +222,56 @@ def _has_ai_echo(conn: sqlite3.Connection, message: ChatMessage) -> bool:
     return row is not None
 
 
+def _has_duplicate_message(conn: sqlite3.Connection, message: ChatMessage) -> bool:
+    """拦截同方向的同步重试，兼容一条有 key、一条无 key 的旧数据。"""
+    if not message.content:
+        return False
+    sender_clause = "sender_id = ?" if message.sender_id else "sender_id = '' AND sender_name = ?"
+    sender_value = message.sender_id or message.sender_name
+    row = conn.execute(f"""
+        SELECT 1 FROM messages
+        WHERE session_id = ?
+          AND {sender_clause}
+          AND content = ?
+          AND is_self = ?
+          AND is_auto = ?
+          AND ABS(timestamp - ?) < ?
+          AND (
+                message_key = ''
+                OR ? = ''
+                OR message_key = ?
+          )
+        LIMIT 1
+    """, (
+        message.session_id,
+        sender_value,
+        message.content,
+        int(message.is_self),
+        int(message.is_auto),
+        float(message.timestamp or 0),
+        MESSAGE_DUPLICATE_TOLERANCE,
+        message.message_key,
+        message.message_key,
+    )).fetchone()
+    return row is not None
+
+
 def _messages_are_duplicates(left: ChatMessage, right: ChatMessage) -> bool:
     if left.session_id != right.session_id:
         return False
     if left.message_key and right.message_key:
-        return left.message_key == right.message_key
+        if left.message_key == right.message_key:
+            return True
+        # 不同服务端 key 通常代表不同消息，但仍允许后面的 AI 回显规则
+        # 处理“本地 AI 记录 + 平台回显”这一种跨来源情况。
     if (
-        not left.message_key
-        and not right.message_key
+        (not left.message_key or not right.message_key)
         and left.sender_id == right.sender_id
+        and (left.sender_id or left.sender_name) == (right.sender_id or right.sender_name)
         and left.content == right.content
         and left.is_self == right.is_self
         and left.is_auto == right.is_auto
-        and abs((left.timestamp or 0) - (right.timestamp or 0)) < 0.001
+        and abs((left.timestamp or 0) - (right.timestamp or 0)) < MESSAGE_DUPLICATE_TOLERANCE
     ):
         return True
     if not (_is_ai_echo_candidate(left) and _is_ai_echo_candidate(right)):
@@ -462,6 +500,8 @@ def save_message(msg: ChatMessage) -> bool:
         # 两者没有相同的服务端 ID，只能用会话、正文、方向和短时间窗口合并。
         if _has_ai_echo(conn, msg):
             return False
+        if _has_duplicate_message(conn, msg):
+            return False
         cur = conn.execute("""
             INSERT OR IGNORE INTO messages (session_id, platform, sender_name, sender_id,
                 content, msg_type, is_self, is_auto, persona, timestamp, message_key)
@@ -492,6 +532,8 @@ def save_incoming_message(session: SessionRecord, msg: ChatMessage) -> tuple[boo
     unread_count = -1
     with _lock:
         try:
+            if _has_duplicate_message(conn, msg):
+                return False, -1
             cur = conn.execute("""
                 INSERT OR IGNORE INTO messages (session_id, platform, sender_name, sender_id,
                     content, msg_type, is_self, is_auto, persona, timestamp, message_key)
@@ -592,27 +634,17 @@ def save_messages_batch(msgs: list[ChatMessage]) -> int:
     _start = _time.perf_counter()
     conn = _get_conn()
     with _lock:
-        normal_msgs = [m for m in msgs if not _is_ai_echo_candidate(m)]
-        # 同一批次内也优先写入 AI 本地记录，再过滤随后出现的平台回显。
-        echo_msgs = sorted(
-            (m for m in msgs if _is_ai_echo_candidate(m)),
+        # 先做批次内去重，并把 AI 本地回复排在平台回显前，
+        # 防止同一次历史同步把两份记录都写进数据库。
+        unique_msgs = deduplicate_messages(msgs)
+        ordered = [m for m in unique_msgs if not _is_ai_echo_candidate(m)]
+        ordered.extend(sorted(
+            (m for m in unique_msgs if _is_ai_echo_candidate(m)),
             key=lambda m: not m.is_auto,
-        )
-        data = [
-            (m.session_id, _platform_from(m.session_id),
-             m.sender_name, m.sender_id, m.content,
-             m.msg_type, int(m.is_self), int(m.is_auto), m.persona, m.timestamp, m.message_key)
-            for m in normal_msgs
-        ]
-        cur = conn.executemany("""
-            INSERT OR IGNORE INTO messages (session_id, platform, sender_name, sender_id,
-                content, msg_type, is_self, is_auto, persona, timestamp, message_key)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, data) if data else None
-        written = cur.rowcount if cur is not None else 0
-        # 仅对可能是 AI 回显的极少数消息做匹配查询，保留普通历史同步的批量写入性能。
-        for m in echo_msgs:
-            if _has_ai_echo(conn, m):
+        ))
+        written = 0
+        for m in ordered:
+            if _has_ai_echo(conn, m) or _has_duplicate_message(conn, m):
                 continue
             cur = conn.execute("""
                 INSERT OR IGNORE INTO messages (session_id, platform, sender_name, sender_id,

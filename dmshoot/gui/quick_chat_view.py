@@ -60,6 +60,7 @@ from dmshoot.gui.widgets.chat_view import (
     _message_is_self,
     ChatView as LegacyChatView,
 )
+from dmshoot.storage.database import deduplicate_messages
 
 
 PAGE_SIZE = 100
@@ -369,6 +370,14 @@ class ChatMessageModel(QAbstractListModel):
         self._reset_items()
 
     def append_message(self, message: ChatMessage) -> None:
+        merged = deduplicate_messages(self._messages + [message])
+        if len(merged) == len(self._messages):
+            return
+        merged.sort(key=lambda item: (item.timestamp or 0, item.id or 0))
+        if merged[-1] is not message:
+            self._messages = merged
+            self._reset_items()
+            return
         self._messages.append(message)
         if not self._items:
             self._reset_items()

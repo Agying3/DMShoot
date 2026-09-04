@@ -65,11 +65,10 @@ def _message_date(message: ChatMessage) -> date | None:
 
 
 def _sender_key(message: ChatMessage) -> str:
-    """用稳定身份分组；没有身份信息时不要把所有未知消息合成一组。"""
-    if message.is_auto:
-        return f"auto:{message.sender_id or message.sender_name or 'AI'}"
-    if message.is_self:
-        return f"self:{message.sender_id or 'me'}"
+    """用稳定身份分组；所有我方消息共用一个 Telegram 消息组。"""
+    if _message_is_self(message):
+        # AI 本地消息和平台 self 回显的 sender_id 不同，不能拿平台 ID 分组。
+        return "self:me"
     identity = message.sender_id or message.sender_name
     return identity or f"unknown:{id(message)}"
 
@@ -1134,6 +1133,18 @@ class ChatView(QWidget):
         QTimer.singleShot(0, keep_position)
 
     def append_message(self, message: ChatMessage):
+        from dmshoot.storage.database import deduplicate_messages
+
+        merged = deduplicate_messages(self._display_messages + [message])
+        if len(merged) == len(self._display_messages):
+            return False
+        merged.sort(key=lambda item: (item.timestamp or 0, item.id or 0))
+        # 正常实时消息应位于末尾；若收到补发的旧消息，完整重排以免破坏顺序。
+        if merged[-1] is not message:
+            self._display_messages = merged
+            self._render_message_items(merged, preserve_scroll=True)
+            return True
+        message = merged[-1]
         was_at_bottom = self._is_near_bottom()
         if self._history_pending:
             self._history_pending.pop(0)
@@ -1177,6 +1188,7 @@ class ChatView(QWidget):
             self._new_message_count += 1
             self._update_new_message_notice()
         QTimer.singleShot(0, self._update_avatar_positions)
+        return True
 
     def _bubble_count(self):
         """兼容旧调用方：现在返回消息数，而不是组控件数。"""

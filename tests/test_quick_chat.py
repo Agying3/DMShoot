@@ -69,6 +69,29 @@ def test_consecutive_messages_share_one_tg_avatar_group(qapp):
     assert model._items[0]["avatarText"] == "Alice"
 
 
+def test_ai_and_platform_echo_share_one_outgoing_group(qapp):
+    """AI 本地回复和平台回显使用不同 sender_id 时仍只有一个我方组。"""
+    from dmshoot.gui.quick_chat_view import ChatMessageModel
+    from dmshoot.storage.models import ChatMessage
+
+    base = datetime(2026, 8, 30, 10, 0).timestamp()
+    model = ChatMessageModel()
+    model.set_messages([
+        ChatMessage(
+            session_id="quick:echo", sender_name="AI", sender_id="ai",
+            content="第一段", is_auto=True, timestamp=base,
+        ),
+        ChatMessage(
+            session_id="quick:echo", sender_name="我", sender_id="platform-id",
+            content="第二段", is_self=True, timestamp=base + 20,
+            message_key="bilibili:echo:2",
+        ),
+    ])
+
+    assert model.rowCount() == 1
+    assert [row["position"] for row in model._items[0]["messages"]] == ["first", "last"]
+
+
 @pytest.mark.gui
 def test_explicit_quick_chat_uses_virtual_list_and_preserves_tg_roles(qapp, qtbot, monkeypatch):
     from PySide6.QtQuick import QQuickItem
