@@ -521,7 +521,9 @@ class ChatMessageModel(QAbstractListModel):
         return {
             "messageKey": _message_key(message),
             "content": content,
+            "plainContent": content,
             "richContent": _rich_content(content),
+            "hasLinks": bool(_URL_RE.search(content)),
             "time": time_text,
             "isSelf": is_self,
             "position": position,

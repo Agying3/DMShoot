@@ -16,13 +16,22 @@ Item {
     property bool historyPending: false
     property bool suppressHistory: true
     property int newMessageCount: 0
+    property bool bottomStateKnown: false
+    property bool lastAtBottom: true
 
     function isNearBottom() {
         return messageList.atYEnd || messageList.contentY >= messageList.contentHeight - messageList.height - 60
     }
 
-    function updateBottomState() {
-        chatRoot.bottomStateChanged(chatRoot.isNearBottom())
+    function updateBottomState(force) {
+        var atBottom = chatRoot.isNearBottom()
+        // contentY 每个滚动像素都会变化，但 Python 只需要知道状态
+        // 跨过底部阈值的时刻，避免滚动过程中产生跨语言信号风暴。
+        if (force || !chatRoot.bottomStateKnown || atBottom !== chatRoot.lastAtBottom) {
+            chatRoot.bottomStateKnown = true
+            chatRoot.lastAtBottom = atBottom
+            chatRoot.bottomStateChanged(atBottom)
+        }
     }
 
     function setFonts(content, meta) {
@@ -53,7 +62,7 @@ Item {
                 messageList.forceLayout()
                 messageList.positionViewAtEnd()
                 suppressHistory = false
-                updateBottomState()
+                updateBottomState(true)
             })
         })
     }
@@ -62,7 +71,7 @@ Item {
         newMessageCount = 0
         historyPending = false
         suppressHistory = true
-        updateBottomState()
+        updateBottomState(true)
     }
 
     function notifyAppended(follow) {
@@ -80,7 +89,7 @@ Item {
     function jumpToLatest() {
         newMessageCount = 0
         messageList.positionViewAtEnd()
-        updateBottomState()
+        updateBottomState(true)
     }
 
     property string prependAnchor: ""
@@ -104,7 +113,7 @@ Item {
                 var item = messageList.itemAtIndex(groupIndex)
                 if (item)
                     messageList.contentY = item.y - prependAnchorOffset
-                updateBottomState()
+                updateBottomState(true)
             })
         })
     }
@@ -118,28 +127,30 @@ Item {
         spacing: 9
         topMargin: 8
         bottomMargin: 8
-        cacheBuffer: 640
+        // 只缓存视口附近少量分组，降低快速上滑时的 delegate 创建成本。
+        cacheBuffer: 320
         reuseItems: true
+        displayMarginBeginning: 0
+        displayMarginEnd: 0
+        pixelAligned: false
+        maximumFlickVelocity: 3600
+        flickDeceleration: 1800
         boundsBehavior: Flickable.StopAtBounds
         boundsMovement: Flickable.StopAtBounds
-        delegate: Item {
+        delegate: Loader {
             id: listDelegate
+            objectName: "chatDelegate"
             width: messageList.width
-            height: loader.item ? loader.item.height : 0
-
-            Loader {
-                id: loader
-                anchors.left: parent.left
-                anchors.right: parent.right
-                property string itemKind: kind
-                property string itemDateText: dateText
-                property string itemMessagesJson: messagesJson
-                property bool itemIsSelf: isSelf
-                property string itemSenderName: senderName
-                property string itemAvatarText: avatarText
-                property string itemAvatarSource: avatarSource
-                sourceComponent: kind === "date" ? dateDelegate : groupDelegate
-            }
+            height: item ? item.height : 0
+            property string itemKind: kind
+            property string itemDateText: dateText
+            property var itemMessages: messages
+            property real itemContentY: y
+            property bool itemIsSelf: isSelf
+            property string itemSenderName: senderName
+            property string itemAvatarText: avatarText
+            property string itemAvatarSource: avatarSource
+            sourceComponent: kind === "date" ? dateDelegate : groupDelegate
         }
 
         onContentYChanged: {
@@ -224,14 +235,11 @@ Item {
             property string senderName: parent ? parent.itemSenderName : ""
             property string avatarText: parent ? parent.itemAvatarText : ""
             property string avatarSource: parent ? parent.itemAvatarSource : ""
-            property var rows: JSON.parse(parent ? (parent.itemMessagesJson || "[]") : "[]")
+            property var rows: parent ? (parent.itemMessages || []) : []
             property int rowCount: rows ? rows.length : 0
-            // group.y 是 Loader 内局部坐标。先映射到 ListView 的 contentItem
-            // 再扣除 contentY，才是视口中的真实位置；这会让头像在组尾之后
-            // 随消息向上离开，而不是永远钉死在视口底部。
-            property real visibleGroupTop: group.mapToItem(
-                messageList.contentItem, 0, 0
-            ).y - messageList.contentY
+            // Loader 的 y 已经是 ListView contentItem 坐标，直接扣除 contentY
+            // 得到视口位置，避免滚动中反复做 mapToItem 坐标映射。
+            property real visibleGroupTop: parent ? parent.itemContentY - messageList.contentY : 0
 
             Item {
                 id: avatarSlot
@@ -370,8 +378,8 @@ Item {
                                 width: Math.max(1, bubble.width - x - 7 -
                                     (message && message.metaWidth > 0 ? message.metaWidth + 4 : 0))
                                 height: Math.max(20, contentHeight)
-                                text: message ? message.richContent : ""
-                                textFormat: TextEdit.RichText
+                                text: message ? (message.hasLinks ? message.richContent : message.plainContent) : ""
+                                textFormat: message && message.hasLinks ? TextEdit.RichText : TextEdit.PlainText
                                 color: "#FFFFFF"
                                 font.family: chatRoot.contentFamily
                                 font.pixelSize: 16

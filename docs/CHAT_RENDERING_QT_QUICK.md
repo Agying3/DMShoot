@@ -33,7 +33,13 @@ DMSHOOT_SOFTWARE_RENDER=1        # 强制兼容后端
 - 新消息使用模型增量插入；如果仍在底部则自动跟随，否则显示新消息按钮。
 - QWidget 回退模式仍由旧实现限制可见消息规模，不走无限控件累积路径。
 
-QML `ListView` 设置了有限 `cacheBuffer` 和 `reuseItems`。消息正文、时间、方向、圆角、尾巴、头像和分组信息都作为轻量模型数据传入；气泡路径由 QML Shape 绘制，避免每条消息创建 QWidget、QLabel 和独立布局树。
+QML `ListView` 设置了有限 `cacheBuffer` 和 `reuseItems`。消息正文、时间、方向、圆角、尾巴、头像和分组信息都作为轻量模型数据传入；气泡路径由 QML Shape 绘制，避免每条消息创建 QWidget、QLabel 和独立布局树。滚动路径还做了三项高频优化：
+
+- 普通正文直接走 `TextEdit.PlainText`，只有包含 URL 的消息才走富文本解析；
+- 分组消息通过模型原生数组传入，避免每个 delegate 重复 `JSON.stringify/parse`；
+- `contentY` 滚动期间只在“接近底部”状态发生变化时通知 Python，头像吸附使用列表内容坐标计算，避免逐像素坐标映射和跨语言信号。
+
+当前聊天列表缓存 320px，并使用 `pixelAligned: false`、较高的桌面滑动速度和较低的减速参数，让触控板/鼠标拖动更接近移动端的连续惯性；真实壁纸合成仍由透明 `QQuickWidget` 完成，因此不能绕过 Quick FBO 的一次合成成本。
 
 ## TG 分组兼容
 

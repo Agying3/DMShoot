@@ -146,6 +146,35 @@ def test_auto_renderer_uses_quick_by_default(qapp, qtbot, monkeypatch):
 
 
 @pytest.mark.gui
+def test_quick_scroll_only_notifies_when_bottom_state_changes(qapp, qtbot, monkeypatch):
+    """滚动中的 contentY 变化不应逐像素跨 Python 发状态信号。"""
+    from dmshoot.gui.quick_chat_view import ChatView
+
+    monkeypatch.setenv("DMSHOOT_CHAT_RENDERER", "quick")
+    view = ChatView()
+    qtbot.addWidget(view)
+    view.resize(760, 520)
+    view.show()
+    view.load_messages("Alice", _messages(5000))
+    qtbot.wait(180)
+
+    root = view._root
+    message_list = root.findChild(type(root), "messageList")
+    assert message_list is not None
+    root.setHistoryAvailable(False)
+    events = []
+    root.bottomStateChanged.connect(events.append)
+    events.clear()
+
+    maximum = int(message_list.property("contentHeight") - message_list.height())
+    assert maximum > 300
+    for value in range(min(120, maximum), min(300, maximum) + 1):
+        message_list.setProperty("contentY", value)
+
+    assert len(events) <= 1
+
+
+@pytest.mark.gui
 def test_quick_transparent_overlay_preserves_parent_wallpaper(qapp, qtbot, monkeypatch):
     """Quick 空白区和气泡区都必须透出 QWidget 父级壁纸。"""
     from PySide6.QtCore import Qt
