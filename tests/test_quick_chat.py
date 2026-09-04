@@ -129,6 +129,66 @@ def test_explicit_quick_chat_uses_virtual_list_and_preserves_tg_roles(qapp, qtbo
 
 
 @pytest.mark.gui
+def test_auto_renderer_uses_quick_by_default(qapp, qtbot, monkeypatch):
+    monkeypatch.delenv("DMSHOOT_CHAT_RENDERER", raising=False)
+    monkeypatch.delenv("DMSHOOT_SOFTWARE_RENDER", raising=False)
+    from dmshoot.gui.quick_chat_view import ChatView
+
+    view = ChatView()
+    qtbot.addWidget(view)
+    view.resize(760, 520)
+    view.show()
+    qtbot.wait(80)
+
+    assert view.renderer_name == "quick"
+    assert view._quick is not None
+    assert view._legacy is None
+
+
+@pytest.mark.gui
+def test_quick_transparent_overlay_preserves_parent_wallpaper(qapp, qtbot, monkeypatch):
+    """Quick 空白区和气泡区都必须透出 QWidget 父级壁纸。"""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QPainter
+    from PySide6.QtWidgets import QWidget
+    from dmshoot.gui.quick_chat_view import ChatView
+
+    monkeypatch.setenv("DMSHOOT_CHAT_RENDERER", "quick")
+
+    class Wallpaper(QWidget):
+        def paintEvent(self, event):
+            painter = QPainter(self)
+            painter.fillRect(self.rect(), QColor("#27a7d8"))
+
+    wallpaper = Wallpaper()
+    wallpaper.resize(800, 560)
+    wallpaper.show()
+    view = ChatView(parent=wallpaper)
+    view.setGeometry(20, 20, 760, 520)
+    view.show()
+    qtbot.wait(120)
+
+    def pixel_at(x, y):
+        # 抓父级最终合成图，而不是只抓 Quick 自身的透明 FBO。
+        return wallpaper.grab().toImage().pixelColor(view.x() + x, view.y() + y)
+
+    empty = pixel_at(20, 180)
+    assert empty.blue() > 150 and empty.green() > 90
+
+    from dmshoot.storage.models import ChatMessage
+    view.load_messages("Alice", [ChatMessage(
+        session_id="quick:transparent", sender_name="Alice", sender_id="alice",
+        content="覆盖层仍然透明", timestamp=1770000000,
+    )])
+    qtbot.wait(160)
+    overlay = pixel_at(20, 180)
+    assert overlay.blue() > 150 and overlay.green() > 90
+    assert view._quick is not None
+    assert not view._quick.testAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop)
+    assert view._quick.autoFillBackground() is False
+
+
+@pytest.mark.gui
 def test_quick_chat_append_and_history_signal(qapp, qtbot, monkeypatch):
     from dmshoot.gui.quick_chat_view import ChatView
 
@@ -346,8 +406,9 @@ def test_quick_avatar_is_circular_and_sticks_while_group_scrolls(qapp, qtbot, tm
 
 
 @pytest.mark.gui
-def test_default_widget_avatar_is_at_group_tail_and_gets_pushed_up(qapp, qtbot):
+def test_default_widget_avatar_is_at_group_tail_and_gets_pushed_up(qapp, qtbot, monkeypatch):
     """默认 QWidget 路径也必须执行 TG 头像的组尾吸附和上顶。"""
+    monkeypatch.setenv("DMSHOOT_CHAT_RENDERER", "widgets")
     from PySide6.QtCore import QPoint
     from dmshoot.gui.quick_chat_view import ChatView
     from dmshoot.gui.widgets.chat_view import MessageGroupWidget
@@ -438,7 +499,7 @@ def test_homepage_avatar_click_opens_wallpaper_safe_chat(temp_db, qapp, qtbot):
     contact = page.contacts._widget_map[session.session_id]
     qtbot.mouseClick(contact.avatar, Qt.LeftButton)
     qtbot.waitUntil(lambda: page.chat.title_label.text() == "Alice", timeout=2500)
-    assert page.chat.renderer_name == "widgets"
-    assert page.chat._content_stack.currentWidget() is page.chat._legacy
-    assert page.chat._legacy.width() > 100 and page.chat._legacy.height() > 100
-    assert len(page.chat._legacy._display_messages) == 1
+    assert page.chat.renderer_name == "quick"
+    assert page.chat._content_stack.currentWidget() is page.chat._quick
+    assert page.chat._quick.width() > 100 and page.chat._quick.height() > 100
+    assert len(page.chat._model.messages) == 1

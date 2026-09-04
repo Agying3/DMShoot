@@ -1,11 +1,10 @@
 import QtQuick 2.15
 import QtQuick.Shapes 1.15
 
-Rectangle {
+Item {
     id: chatRoot
     objectName: "quickChatRoot"
     // 壁纸由 QWidget 父级统一绘制，Quick 只绘制消息和交互控件。
-    color: "transparent"
 
     signal historyRequested()
     signal bottomStateChanged(bool atBottom)

@@ -260,7 +260,10 @@ QWidget#chatBubbleContainer {
     background: transparent;
 }
 QWidget#chatContentHost {
-    background: #10141D;
+    background: transparent;
+}
+QStackedWidget#chatContentStack {
+    background: transparent;
 }
 QLabel#tgSenderName {
     color: #6AC5E8;

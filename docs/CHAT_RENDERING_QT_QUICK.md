@@ -2,22 +2,22 @@
 
 ## 结论
 
-DMShoot 的聊天区以 QWidget 为唯一生产后端，Qt Quick 仅保留为显式性能实验后端：
+DMShoot 的聊天区默认使用 Qt Quick，QWidget 保留为兼容和异常降级后端：
 
 | 后端 | 用途 | 渲染方式 |
 | --- | --- | --- |
-| `widgets` | 默认生产后端 | 原有 QWidget 气泡实现，与主窗口壁纸共享 QWidget 合成链路 |
-| `quick` | 显式性能实验 | `QQuickWidget` + QML `ListView` + Qt Quick Scene Graph |
+| `quick` | 默认生产后端 | `QQuickWidget` + QML `ListView` + Qt Quick Scene Graph，透明覆盖 QWidget 壁纸 |
+| `widgets` | 显式兼容/降级后端 | 原有 QWidget 气泡实现，与主窗口壁纸共享 QWidget 合成链路 |
 
-生产聊天区继续与主窗口共用 QWidget 合成链路，因此不会遮挡壁纸。显式启用 Quick 时，Windows 通常使用实际可用的图形后端，例如 `Direct3D11`；该模式只用于性能探针和后续独立评估，不参与默认首页逻辑。
+Quick 聊天区使用透明 FBO 覆盖在现有 QWidget 聊天容器上，壁纸仍由主窗口的 `WallpaperBody` 统一绘制。Quick 不绘制聊天底板，因此空白区域和消息气泡之间不会切断壁纸。Windows 通常使用实际可用的图形后端，例如 `Direct3D11`。
 
 ## 运行时选择
 
-默认值是 `auto`，启动时使用 QWidget 聊天区，保证壁纸、文档和聊天共享同一套显示层级。以下环境变量可用于诊断 Quick：
+默认值是 `auto`，启动时优先使用 Quick；以下环境变量可用于兼容和诊断：
 
 ```text
-DMSHOOT_CHAT_RENDERER=auto       # 默认生产模式：QWidget 聊天区
-DMSHOOT_CHAT_RENDERER=quick      # 显式启用 Quick 性能实验
+DMSHOOT_CHAT_RENDERER=auto       # 默认生产模式：Quick 透明聊天区
+DMSHOOT_CHAT_RENDERER=quick      # 显式启用 Quick
 DMSHOOT_CHAT_RENDERER=widgets    # 强制旧版 QWidget 聊天区
 DMSHOOT_SOFTWARE_RENDER=1        # 强制兼容后端
 ```
