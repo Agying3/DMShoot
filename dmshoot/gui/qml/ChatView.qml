@@ -4,9 +4,8 @@ import QtQuick.Shapes 1.15
 Rectangle {
     id: chatRoot
     objectName: "quickChatRoot"
-    // QQuickWidget 默认的 FBO 可能是透明的；聊天页必须自己填满底色，
-    // 否则首屏无消息时会透出主窗口下层页面。
-    color: "#10141D"
+    // 壁纸由 QWidget 父级统一绘制，Quick 只绘制消息和交互控件。
+    color: "transparent"
 
     signal historyRequested()
     signal bottomStateChanged(bool atBottom)

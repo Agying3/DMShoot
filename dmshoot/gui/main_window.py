@@ -504,6 +504,7 @@ class MainWindow(QMainWindow):
 
         logger.info("_build_content: body...")
         body = QWidget()
+        body.setObjectName("WallpaperBody")
         bl = QHBoxLayout(); bl.setContentsMargins(0,0,0,0); bl.setSpacing(0)
         self.sidebar = Sidebar()
         self.sidebar.page_changed.connect(self._on_nav)
@@ -537,7 +538,7 @@ class MainWindow(QMainWindow):
         path = self.config.wallpaper_path
         if path and Path(path).exists():
             self._body.setStyleSheet(
-                f"QWidget#ContentPanel body {{"
+                f"QWidget#WallpaperBody {{"
                 f"  background-image: url({path.replace(chr(92), '/')});"
                 f"  background-position: center;"
                 f"  border: none;"

@@ -32,7 +32,6 @@ from PySide6.QtGui import (
     QFont,
     QFontMetrics,
     QTextOption,
-    QPalette,
     QImage,
     QPainter,
     QPainterPath,
@@ -594,20 +593,17 @@ class ChatView(QWidget):
 
         self._content_host = QWidget()
         self._content_host.setObjectName("chatContentHost")
-        self._content_host.setAutoFillBackground(True)
-        palette = self._content_host.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor("#10141D"))
-        self._content_host.setPalette(palette)
+        self._content_host.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._content_host.setAutoFillBackground(False)
         host_layout = QVBoxLayout(self._content_host)
         host_layout.setContentsMargins(0, 0, 0, 0)
         host_layout.setSpacing(0)
-        # QStackedLayout 在窗口刚显示时可能暂时不给当前页分配几何尺寸。
-        # 使用 QStackedWidget 让 Qt 直接管理当前页的可见性和尺寸，
-        # 避免 QQuickWidget 首帧为 0x0 时露出下层页面。
+        # 只负责切换内容，不负责绘制底色；底色和壁纸由主窗口统一管理。
         self._content_stack = QStackedWidget(self._content_host)
         self._content_stack.setObjectName("chatContentStack")
-        self._content_stack.setAutoFillBackground(True)
-        self._content_stack.setStyleSheet("QStackedWidget { background: #10141D; border: none; }")
+        self._content_stack.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._content_stack.setAutoFillBackground(False)
+        self._content_stack.setStyleSheet("QStackedWidget { background: transparent; border: none; }")
         host_layout.addWidget(self._content_stack)
         layout.addWidget(self._content_host, 1)
 
@@ -635,8 +631,14 @@ class ChatView(QWidget):
         requested = os.environ.get("DMSHOOT_CHAT_RENDERER", "auto").lower().strip()
         if requested not in {"auto", "quick", "widgets"}:
             requested = "auto"
-        if requested == "widgets" or os.environ.get("DMSHOOT_SOFTWARE_RENDER") == "1":
-            self._use_legacy("环境变量要求使用 QWidget 渲染")
+        # Quick 与 QWidget 的合成层级和壁纸并不天然兼容。首页默认使用
+        # 原有 QWidget 聊天区，Quick 只作为显式的性能实验后端，避免两套
+        # 视觉链路同时承担生产逻辑。
+        if requested in {"auto", "widgets"} or os.environ.get("DMSHOOT_SOFTWARE_RENDER") == "1":
+            reason = "默认使用 QWidget 聊天渲染，保证壁纸合成一致"
+            if requested == "widgets" or os.environ.get("DMSHOOT_SOFTWARE_RENDER") == "1":
+                reason = "环境变量要求使用 QWidget 渲染"
+            self._use_legacy(reason)
             return
         try:
             self._create_quick()
@@ -654,11 +656,12 @@ class ChatView(QWidget):
         self._model.set_font_families(self._content_family, self._meta_family)
         quick = QQuickWidget()
         quick.setResizeMode(QQuickWidget.ResizeMode.SizeRootObjectToView)
-        # QQuickWidget 的透明 FBO 会把 QStackedWidget 里已经隐藏的页面露出来。
-        # 聊天区域单独使用稳定底板，避免空消息区看起来像被挖空。
-        quick.setClearColor(QColor("#10141D"))
-        quick.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
-        quick.setStyleSheet("QQuickWidget { background: #10141D; border: none; }")
+        # Quick 实验后端也不应覆盖父级壁纸；WA_AlwaysStackOnTop 是
+        # QQuickWidget 在 QWidget 层级中保留透明 FBO 的必要条件。
+        quick.setClearColor(QColor(0, 0, 0, 0))
+        quick.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        quick.setAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop)
+        quick.setStyleSheet("QQuickWidget { background: transparent; border: none; }")
         quick.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         quick.rootContext().setContextProperty("chatModel", self._model)
         quick.statusChanged.connect(self._on_quick_status)

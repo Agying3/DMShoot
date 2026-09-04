@@ -70,9 +70,11 @@ def test_consecutive_messages_share_one_tg_avatar_group(qapp):
 
 
 @pytest.mark.gui
-def test_quick_chat_uses_virtual_list_and_preserves_tg_roles(qapp, qtbot):
+def test_explicit_quick_chat_uses_virtual_list_and_preserves_tg_roles(qapp, qtbot, monkeypatch):
     from PySide6.QtQuick import QQuickItem
     from dmshoot.gui.quick_chat_view import ChatView
+
+    monkeypatch.setenv("DMSHOOT_CHAT_RENDERER", "quick")
 
     def visual_item_count(item: QQuickItem) -> int:
         return 1 + sum(visual_item_count(child) for child in item.childItems())
@@ -104,9 +106,10 @@ def test_quick_chat_uses_virtual_list_and_preserves_tg_roles(qapp, qtbot):
 
 
 @pytest.mark.gui
-def test_quick_chat_append_and_history_signal(qapp, qtbot):
+def test_quick_chat_append_and_history_signal(qapp, qtbot, monkeypatch):
     from dmshoot.gui.quick_chat_view import ChatView
 
+    monkeypatch.setenv("DMSHOOT_CHAT_RENDERER", "quick")
     view = ChatView()
     qtbot.addWidget(view)
     view.resize(760, 520)
@@ -225,7 +228,7 @@ def test_markdown_switch_discards_stale_background_result(qapp, qtbot, tmp_path,
 
 
 @pytest.mark.gui
-def test_quick_avatar_is_circular_and_sticks_while_group_scrolls(qapp, qtbot, tmp_path):
+def test_quick_avatar_is_circular_and_sticks_while_group_scrolls(qapp, qtbot, tmp_path, monkeypatch):
     """真实渲染断言：头像有图、四角不泄漏，并在长消息组中吸附到底部。"""
     from PySide6.QtCore import QPointF
     from PySide6.QtGui import QColor, QImage
@@ -233,6 +236,7 @@ def test_quick_avatar_is_circular_and_sticks_while_group_scrolls(qapp, qtbot, tm
     from dmshoot.gui.quick_chat_view import ChatView
     from dmshoot.storage.models import ChatMessage
 
+    monkeypatch.setenv("DMSHOOT_CHAT_RENDERER", "quick")
     avatar_path = tmp_path / "avatar.png"
     avatar_image = QImage(48, 48, QImage.Format.Format_ARGB32)
     avatar_image.fill(QColor("#ef4444"))
@@ -319,8 +323,8 @@ def test_quick_avatar_is_circular_and_sticks_while_group_scrolls(qapp, qtbot, tm
 
 
 @pytest.mark.gui
-def test_homepage_avatar_click_opens_opaque_quick_chat(temp_db, qapp, qtbot):
-    """联系人头像点击必须经过 HomePage 打开有尺寸的 Quick 聊天区。"""
+def test_homepage_avatar_click_opens_wallpaper_safe_chat(temp_db, qapp, qtbot):
+    """联系人头像点击必须打开与主窗口壁纸共享合成链路的聊天区。"""
     from PySide6.QtCore import Qt
     from dmshoot.gui.monitor_panel import MonitorPanel
     from dmshoot.gui.pages.home_page import HomePage
@@ -353,15 +357,7 @@ def test_homepage_avatar_click_opens_opaque_quick_chat(temp_db, qapp, qtbot):
     contact = page.contacts._widget_map[session.session_id]
     qtbot.mouseClick(contact.avatar, Qt.LeftButton)
     qtbot.waitUntil(lambda: page.chat.title_label.text() == "Alice", timeout=2500)
-    qtbot.waitUntil(
-        lambda: page.chat._quick is not None and page.chat._quick.width() > 100
-        and page.chat._quick.height() > 100,
-        timeout=2500,
-    )
-
-    assert page.chat.renderer_name == "quick"
-    assert page.chat._content_stack.currentWidget() is page.chat._quick
-    frame = page.chat._quick.grab().toImage()
-    background = frame.pixelColor(2, 2)
-    assert background.red() < 25 and background.green() < 30 and background.blue() < 40
-    assert page.chat._model.rowCount() == 1
+    assert page.chat.renderer_name == "widgets"
+    assert page.chat._content_stack.currentWidget() is page.chat._legacy
+    assert page.chat._legacy.width() > 100 and page.chat._legacy.height() > 100
+    assert len(page.chat._legacy._display_messages) == 1

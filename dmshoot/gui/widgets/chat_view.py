@@ -1106,7 +1106,7 @@ class ChatView(QWidget):
                 scrollbar.setValue(old_value + max(0, scrollbar.maximum() - old_maximum))
             self._update_avatar_positions()
 
-        QTimer.singleShot(0, restore_position)
+        self._defer(restore_position)
 
     def _load_history_chunk(self):
         if not self._history_pending:
@@ -1243,6 +1243,18 @@ class ChatView(QWidget):
             if isinstance(item, MessageGroupWidget):
                 item.update_avatar_position(scroll_top, viewport.height())
 
+    def _defer(self, callback):
+        """使用归属于视图的定时器，避免销毁后执行悬空的延迟回调。"""
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+
+        def invoke():
+            timer.deleteLater()
+            callback()
+
+        timer.timeout.connect(invoke)
+        timer.start(0)
+
     def _position_new_message_button(self):
         viewport = self.scroll.viewport()
         self._new_message_button.move(
@@ -1254,17 +1266,17 @@ class ChatView(QWidget):
         if watched is self.scroll.viewport() and event.type() in (QEvent.Resize, QEvent.Show):
             self._position_new_message_button()
             self._update_bubble_widths()
-            QTimer.singleShot(0, self._update_avatar_positions)
+            self._defer(self._update_avatar_positions)
         elif watched is self.bubble_container and event.type() in (
             QEvent.Resize, QEvent.LayoutRequest,
         ):
-            QTimer.singleShot(0, self._update_avatar_positions)
+            self._defer(self._update_avatar_positions)
         return super().eventFilter(watched, event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_bubble_widths()
-        QTimer.singleShot(0, self._update_avatar_positions)
+        self._defer(self._update_avatar_positions)
 
     def _schedule_scroll(self, delay: int = 60, force: bool = False):
         """合并短时间内的滚动请求，消息洪峰时只重排一次。"""

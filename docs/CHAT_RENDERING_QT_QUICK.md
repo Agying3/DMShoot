@@ -2,22 +2,22 @@
 
 ## 结论
 
-DMShoot 的聊天区现在采用 Qt Quick 优先、QWidget 自动降级的双后端：
+DMShoot 的聊天区以 QWidget 为唯一生产后端，Qt Quick 仅保留为显式性能实验后端：
 
 | 后端 | 用途 | 渲染方式 |
 | --- | --- | --- |
-| `quick` | 默认后端 | `QQuickWidget` + QML `ListView` + Qt Quick Scene Graph |
-| `widgets` | 兼容与故障回退 | 原有 QWidget 气泡实现 |
+| `widgets` | 默认生产后端 | 原有 QWidget 气泡实现，与主窗口壁纸共享 QWidget 合成链路 |
+| `quick` | 显式性能实验 | `QQuickWidget` + QML `ListView` + Qt Quick Scene Graph |
 
-Windows 正常环境下 Qt Quick 使用实际可用的图形后端，例如 `Direct3D11`。聊天数据仍由 Python 的 `QAbstractListModel` 持有，QML 只为可视区域和有限缓存创建消息组，因此历史消息数量不会直接转化为 QWidget 数量。
+生产聊天区继续与主窗口共用 QWidget 合成链路，因此不会遮挡壁纸。显式启用 Quick 时，Windows 通常使用实际可用的图形后端，例如 `Direct3D11`；该模式只用于性能探针和后续独立评估，不参与默认首页逻辑。
 
 ## 运行时选择
 
-默认值是 `auto`，启动时优先创建 Qt Quick。以下环境变量可用于诊断：
+默认值是 `auto`，启动时使用 QWidget 聊天区，保证壁纸、文档和聊天共享同一套显示层级。以下环境变量可用于诊断 Quick：
 
 ```text
-DMSHOOT_CHAT_RENDERER=auto       # 默认，Quick 失败时回退 QWidget
-DMSHOOT_CHAT_RENDERER=quick      # 优先验证 Quick，失败仍允许应用启动
+DMSHOOT_CHAT_RENDERER=auto       # 默认生产模式：QWidget 聊天区
+DMSHOOT_CHAT_RENDERER=quick      # 显式启用 Quick 性能实验
 DMSHOOT_CHAT_RENDERER=widgets    # 强制旧版 QWidget 聊天区
 DMSHOOT_SOFTWARE_RENDER=1        # 强制兼容后端
 ```
@@ -55,7 +55,7 @@ Python 模型按相邻发送者、消息方向和日期分组。组内消息使�
 - 长列表 `contentHeight` 正确计算；
 - 实际 Quick 可视树约 281 个 item，未随 5000 条消息线性增长；
 - 混合收发消息、三条连续消息、日期分隔、头像和 URL 均可正常渲染；
-- Quick 专项测试和 QWidget 强制回退测试通过。
+- Quick 专项测试和 QWidget 默认生产路径测试通过。
 
 ## 打包要求
 
