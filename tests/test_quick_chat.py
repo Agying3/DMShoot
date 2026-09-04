@@ -184,6 +184,9 @@ def test_quick_transparent_overlay_preserves_parent_wallpaper(qapp, qtbot, monke
     overlay = pixel_at(20, 180)
     assert overlay.blue() > 150 and overlay.green() > 90
     assert view._quick is not None
+    assert not view.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    assert not view._content_host.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    assert not view._content_stack.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
     assert not view._quick.testAttribute(Qt.WidgetAttribute.WA_AlwaysStackOnTop)
     assert view._quick.autoFillBackground() is False
 

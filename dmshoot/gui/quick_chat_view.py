@@ -549,9 +549,6 @@ class ChatView(QWidget):
 
     def __init__(self, font_manager=None, parent=None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        self.setAutoFillBackground(False)
         self._font_manager = font_manager
         self._font_mode = getattr(font_manager, "current_mode", "system")
         if font_manager is not None:
@@ -605,18 +602,12 @@ class ChatView(QWidget):
 
         self._content_host = QWidget()
         self._content_host.setObjectName("chatContentHost")
-        self._content_host.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self._content_host.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        self._content_host.setAutoFillBackground(False)
         host_layout = QVBoxLayout(self._content_host)
         host_layout.setContentsMargins(0, 0, 0, 0)
         host_layout.setSpacing(0)
         # 只负责切换内容，不负责绘制底色；底色和壁纸由主窗口统一管理。
         self._content_stack = QStackedWidget(self._content_host)
         self._content_stack.setObjectName("chatContentStack")
-        self._content_stack.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self._content_stack.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
-        self._content_stack.setAutoFillBackground(False)
         self._content_stack.setStyleSheet("QStackedWidget { background: transparent; border: none; }")
         host_layout.addWidget(self._content_stack)
         layout.addWidget(self._content_host, 1)
