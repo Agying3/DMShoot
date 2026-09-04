@@ -215,6 +215,7 @@ class HomePage(QWidget):
         # 维护缓存（按时间排序，保证 oldest first）
         cache = self._msg_cache.get(session_id, [])
         merged = database.deduplicate_messages(cache + [msg])
+        merged.sort(key=lambda item: (item.timestamp or 0, item.id or 0))
         # 新消息被已有服务端键或 AI 平台回显命中时，不再重复推送气泡。
         if len(merged) == len(cache):
             self._msg_cache[session_id] = merged
