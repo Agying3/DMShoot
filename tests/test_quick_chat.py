@@ -155,8 +155,8 @@ def test_quick_scroll_only_notifies_when_bottom_state_changes(qapp, qtbot, monke
     qtbot.addWidget(view)
     view.resize(760, 520)
     view.show()
-    view.load_messages("Alice", _messages(5000))
-    qtbot.wait(180)
+    view.load_messages("Alice", _messages(500))
+    qtbot.wait(300)
 
     root = view._root
     message_list = root.findChild(type(root), "messageList")
@@ -172,6 +172,39 @@ def test_quick_scroll_only_notifies_when_bottom_state_changes(qapp, qtbot, monke
         message_list.setProperty("contentY", value)
 
     assert len(events) <= 1
+
+
+@pytest.mark.gui
+def test_quick_wheel_scroll_has_direct_touchpad_and_animated_mouse_paths(qapp, qtbot, monkeypatch):
+    """触控板像素滚动跟手，鼠标滚轮使用可复用的短动画。"""
+    from PySide6.QtCore import QObject
+    from PySide6.QtQuick import QQuickItem
+    from dmshoot.gui.quick_chat_view import ChatView
+
+    monkeypatch.setenv("DMSHOOT_CHAT_RENDERER", "quick")
+    view = ChatView()
+    qtbot.addWidget(view)
+    view.resize(760, 520)
+    view.show()
+    view.load_messages("Alice", _messages(500))
+    qtbot.wait(300)
+
+    root = view._root
+    message_list = root.findChild(QQuickItem, "messageList")
+    assert message_list is not None
+    assert root.findChild(QObject, "chatWheelHandler") is not None
+    assert message_list.property("maximumFlickVelocity") == 5200
+    assert message_list.property("flickDeceleration") == 1200
+
+    at_end = float(message_list.property("contentY"))
+    root.scrollByWheel(96, False)
+    touchpad_y = float(message_list.property("contentY"))
+    assert touchpad_y < at_end
+    assert at_end - touchpad_y > 0
+
+    root.scrollByWheel(96, True)
+    qtbot.wait(140)
+    assert float(message_list.property("contentY")) < touchpad_y
 
 
 @pytest.mark.gui

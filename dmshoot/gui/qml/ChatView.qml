@@ -92,6 +92,19 @@ Item {
         updateBottomState(true)
     }
 
+    function scrollByWheel(delta, animate) {
+        messageList.cancelFlick()
+        var maximum = Math.max(0, messageList.contentHeight - messageList.height)
+        var target = Math.max(0, Math.min(maximum, messageList.contentY - delta))
+        if (animate) {
+            wheelAnimation.to = target
+            wheelAnimation.restart()
+        } else {
+            wheelAnimation.stop()
+            messageList.contentY = target
+        }
+    }
+
     property string prependAnchor: ""
     property real prependAnchorOffset: 0
 
@@ -133,8 +146,8 @@ Item {
         displayMarginBeginning: 0
         displayMarginEnd: 0
         pixelAligned: false
-        maximumFlickVelocity: 3600
-        flickDeceleration: 1800
+        maximumFlickVelocity: 5200
+        flickDeceleration: 1200
         boundsBehavior: Flickable.StopAtBounds
         boundsMovement: Flickable.StopAtBounds
         delegate: Loader {
@@ -163,6 +176,29 @@ Item {
         }
         onContentHeightChanged: updateBottomState()
         onMovementEnded: updateBottomState()
+    }
+
+    WheelHandler {
+        id: wheelHandler
+        objectName: "chatWheelHandler"
+        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+        target: null
+        onWheel: (event) => {
+            var delta = event.pixelDelta.y
+            var animate = !delta
+            if (animate)
+                delta = event.angleDelta.y / 120 * 72
+            chatRoot.scrollByWheel(delta, animate)
+            event.accepted = true
+        }
+    }
+
+    NumberAnimation {
+        id: wheelAnimation
+        target: messageList
+        property: "contentY"
+        duration: 90
+        easing.type: Easing.OutCubic
     }
 
     Rectangle {
@@ -321,7 +357,7 @@ Item {
                             width: message ? Math.min(maxWidth, Math.max(72,
                                 15 + (message.tailSide === "left" ? 6 : 0) +
                                 message.naturalWidth + (message.metaWidth > 0 ? 4 + message.metaWidth : 0))) : 72
-                            height: Math.max(30, contentText.height + 9)
+                            height: Math.max(30, contentRenderer.height + 9)
                             x: bubbleRow.outgoing ? bubbleRow.width - width -
                                 (message && message.tailSide === "" ? 6 : 0) :
                                 (message && message.tailSide === "left" ? 6 : 0)
@@ -371,24 +407,52 @@ Item {
                                 }
                             }
 
-                            TextEdit {
-                                id: contentText
+                            Loader {
+                                id: contentRenderer
                                 x: message && message.tailSide === "left" ? 14 : 8
                                 y: 4
                                 width: Math.max(1, bubble.width - x - 7 -
                                     (message && message.metaWidth > 0 ? message.metaWidth + 4 : 0))
-                                height: Math.max(20, contentHeight)
-                                text: message ? (message.hasLinks ? message.richContent : message.plainContent) : ""
-                                textFormat: message && message.hasLinks ? TextEdit.RichText : TextEdit.PlainText
-                                color: "#FFFFFF"
-                                font.family: chatRoot.contentFamily
-                                font.pixelSize: 16
-                                wrapMode: TextEdit.Wrap
-                                readOnly: true
-                                selectByMouse: true
-                                selectByKeyboard: true
-                                persistentSelection: false
-                                onLinkActivated: chatRoot.linkActivated(link)
+                                height: item ? item.height : 20
+                                property var itemMessage: message
+                                sourceComponent: message && message.hasLinks ? richTextComponent : plainTextComponent
+                            }
+
+                            Component {
+                                id: plainTextComponent
+                                TextEdit {
+                                    width: contentRenderer.width
+                                    height: Math.max(20, contentHeight)
+                                    text: contentRenderer.itemMessage ? contentRenderer.itemMessage.plainContent : ""
+                                    textFormat: TextEdit.PlainText
+                                    color: "#FFFFFF"
+                                    font.family: chatRoot.contentFamily
+                                    font.pixelSize: 16
+                                    wrapMode: TextEdit.Wrap
+                                    readOnly: true
+                                    selectByMouse: true
+                                    selectByKeyboard: true
+                                    persistentSelection: false
+                                }
+                            }
+
+                            Component {
+                                id: richTextComponent
+                                TextEdit {
+                                    width: contentRenderer.width
+                                    height: Math.max(20, contentHeight)
+                                    text: contentRenderer.itemMessage ? contentRenderer.itemMessage.richContent : ""
+                                    textFormat: TextEdit.RichText
+                                    color: "#FFFFFF"
+                                    font.family: chatRoot.contentFamily
+                                    font.pixelSize: 16
+                                    wrapMode: TextEdit.Wrap
+                                    readOnly: true
+                                    selectByMouse: true
+                                    selectByKeyboard: true
+                                    persistentSelection: false
+                                    onLinkActivated: chatRoot.linkActivated(link)
+                                }
                             }
 
                             Row {
