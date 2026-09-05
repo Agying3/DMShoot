@@ -56,6 +56,7 @@ from dmshoot.gui.widgets.chat_view import (
     _avatar_cache_path,
     _group_key,
     _group_messages,
+    _message_gap_before,
     _message_date,
     _message_is_self,
     ChatView as LegacyChatView,
@@ -455,7 +456,15 @@ class ChatMessageModel(QAbstractListModel):
     def _group_dict(self, messages: list[ChatMessage]) -> dict:
         first = messages[0]
         is_self = _message_is_self(first)
-        rows = [self._message_dict(message, index, len(messages)) for index, message in enumerate(messages)]
+        rows = [
+            self._message_dict(
+                message,
+                index,
+                len(messages),
+                messages[index - 1] if index else None,
+            )
+            for index, message in enumerate(messages)
+        ]
         avatar_url = self._my_avatar_url if is_self else self._peer_avatar_url
         avatar_source = _quick_avatar_source(avatar_url)
         return {
@@ -474,6 +483,7 @@ class ChatMessageModel(QAbstractListModel):
         message: ChatMessage,
         index: int,
         total: int | None = None,
+        previous: ChatMessage | None = None,
     ) -> dict:
         total = total or 1
         is_self = _message_is_self(message)
@@ -531,6 +541,7 @@ class ChatMessageModel(QAbstractListModel):
             "radii": list(radii),
             "naturalWidth": natural_width,
             "metaWidth": meta_width + (2 + check_width if check_width else 0),
+            "gapBefore": _message_gap_before(previous, message),
             "showName": not is_self and index == 0 and bool(message.sender_name),
         }
 

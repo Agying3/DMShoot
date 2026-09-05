@@ -26,7 +26,7 @@ BUBBLE_RADIUS = 13
 SEAM_RADIUS = 4
 GROUP_SPACING = 9
 MESSAGE_SEAM = 2
-GROUP_TIME_WINDOW = 5 * 60
+MESSAGE_BURST_WINDOW = 60
 MAX_BUBBLE_WIDTH = 480
 BUBBLE_FONT_FAMILY = "Microsoft YaHei"
 BUBBLE_FONT_SIZE = 16
@@ -78,28 +78,30 @@ def _group_key(message: ChatMessage) -> tuple[str, bool, date | None]:
 
 
 def _can_join_group(previous: ChatMessage, current: ChatMessage) -> bool:
-    """Telegram 风格分组：身份、方向、日期相同且间隔较短才合并。"""
-    if _group_key(previous) != _group_key(current):
-        return False
-    previous_ts = previous.timestamp or 0
-    current_ts = current.timestamp or 0
-    if previous_ts > 0 and current_ts > 0:
-        return abs(current_ts - previous_ts) <= GROUP_TIME_WINDOW
-    return True
+    """相邻消息只按身份、方向和日期分组，时间差只影响组内留白。"""
+    return _group_key(previous) == _group_key(current)
+
+
+def _message_gap_before(previous: ChatMessage | None, current: ChatMessage) -> int:
+    """同一轮快速连发保持紧凑，隔了一段时间则留出清晰呼吸位。"""
+    if previous is None:
+        return 0
+    previous_ts = float(previous.timestamp or 0)
+    current_ts = float(current.timestamp or 0)
+    if previous_ts <= 0 or current_ts <= 0:
+        return 0
+    return 8 if abs(current_ts - previous_ts) > MESSAGE_BURST_WINDOW else 0
 
 
 def _group_messages(messages: list[ChatMessage]) -> list[list[ChatMessage]]:
     """按相邻发送者、方向和日期分组，日期变化会强制断组。"""
     groups: list[list[ChatMessage]] = []
     current: list[ChatMessage] = []
-    previous_key = None
     for message in messages:
-        key = _group_key(message)
         if current and not _can_join_group(current[-1], message):
             groups.append(current)
             current = []
         current.append(message)
-        previous_key = key
     if current:
         groups.append(current)
     return groups
@@ -541,14 +543,15 @@ class BubbleWidget(QFrame):
 class BubbleRowWidget(QWidget):
     """让组尾的尾巴向外伸，而不是挤掉同组消息的对齐边。"""
 
-    def __init__(self, bubble: BubbleWidget, is_self: bool, parent=None):
+    def __init__(self, bubble: BubbleWidget, is_self: bool, parent=None, top_gap: int = 0):
         super().__init__(parent)
         self.bubble = bubble
+        self._top_gap = max(0, int(top_gap))
         self._tail_gutter = BUBBLE_TAIL_WIDTH if not bubble._tail_side else 0
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(0, self._top_gap, 0, 0)
         layout.setSpacing(0)
         if is_self:
             layout.addStretch(1)
@@ -567,7 +570,7 @@ class BubbleRowWidget(QWidget):
         return self._tail_gutter
 
     def sync_height(self):
-        height = max(1, self.bubble.height())
+        height = max(1, self.bubble.height() + self._top_gap)
         if self.height() != height:
             self.setFixedHeight(height)
         self.updateGeometry()
@@ -672,7 +675,13 @@ class MessageGroupWidget(QWidget):
                 content_family=self._content_family,
                 meta_family=self._meta_family,
             )
-            row = BubbleRowWidget(bubble, is_self, self)
+            previous = self._messages[index - 1] if index else None
+            row = BubbleRowWidget(
+                bubble,
+                is_self,
+                self,
+                top_gap=_message_gap_before(previous, message),
+            )
             self._bubble_rows.append(row)
             self.stack.addWidget(row)
 

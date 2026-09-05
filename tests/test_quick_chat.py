@@ -52,21 +52,93 @@ def test_consecutive_messages_share_one_tg_avatar_group(qapp):
         )
         for index in range(3)
     ]
-    separate = ChatMessage(
+    later = ChatMessage(
         session_id="quick:group",
         sender_name="Alice",
         sender_id="alice",
-        content="超过时间窗口",
+        content="同一天稍后继续发送",
         timestamp=base + 400,
     )
     model = ChatMessageModel()
-    model.set_messages(group + [separate])
+    model.set_messages(group + [later])
 
-    assert model.rowCount() == 2
+    assert model.rowCount() == 1
     assert [row["position"] for row in model._items[0]["messages"]] == [
-        "first", "middle", "last",
+        "first", "middle", "middle", "last",
     ]
+    assert [row["gapBefore"] for row in model._items[0]["messages"]] == [0, 0, 0, 8]
     assert model._items[0]["avatarText"] == "Alice"
+
+
+def test_sender_interruption_still_breaks_avatar_group(qapp):
+    from dmshoot.gui.quick_chat_view import ChatMessageModel
+    from dmshoot.storage.models import ChatMessage
+
+    base = datetime(2026, 8, 30, 10, 0).timestamp()
+    model = ChatMessageModel()
+    model.set_messages([
+        ChatMessage(sender_name="Alice", sender_id="alice", content="一", timestamp=base),
+        ChatMessage(sender_name="Bob", sender_id="bob", content="二", timestamp=base + 10),
+        ChatMessage(sender_name="Alice", sender_id="alice", content="三", timestamp=base + 20),
+    ])
+
+    assert model.rowCount() == 3
+
+
+@pytest.mark.gui
+def test_quick_bubbles_align_and_long_text_keeps_stable_height(qapp, qtbot, monkeypatch):
+    """尾巴不改变主体基线，长文本也不能覆盖下一条消息。"""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtQuick import QQuickItem
+    from dmshoot.gui.quick_chat_view import ChatView
+    from dmshoot.storage.models import ChatMessage
+
+    monkeypatch.setenv("DMSHOOT_CHAT_RENDERER", "quick")
+    base = datetime(2026, 8, 30, 10, 0).timestamp()
+    messages = [
+        ChatMessage(sender_name="Alice", sender_id="alice", content="短消息", timestamp=base),
+        ChatMessage(
+            sender_name="Alice",
+            sender_id="alice",
+            content="这是一条需要自动换行的长消息，正文高度必须完整包进气泡，不能覆盖下一条消息。" * 2,
+            timestamp=base + 10,
+        ),
+        ChatMessage(sender_name="Alice", sender_id="alice", content="稍后继续", timestamp=base + 180),
+    ]
+    view = ChatView()
+    qtbot.addWidget(view)
+    view.resize(620, 360)
+    view.show()
+    view.load_messages("Alice", messages)
+    qtbot.wait(250)
+
+    root = view._root
+
+    def named_items(item, name):
+        result = [item] if item.objectName() == name else []
+        for child in item.childItems():
+            result.extend(named_items(child, name))
+        return result
+
+    bubbles = sorted(
+        named_items(root, "bubbleSurface"),
+        key=lambda item: item.mapToItem(root, QPointF(0, 0)).y(),
+    )
+    rows = sorted(
+        named_items(root, "bubbleRow"),
+        key=lambda item: item.mapToItem(root, QPointF(0, 0)).y(),
+    )
+    texts = named_items(root, "bubbleText")
+    assert len(bubbles) == len(rows) == len(texts) == 3
+    assert max(float(item.property("bodyLeft")) for item in bubbles) - min(
+        float(item.property("bodyLeft")) for item in bubbles
+    ) <= 0.5
+    assert float(rows[-1].property("topGap")) == 8
+    for current, following in zip(bubbles, bubbles[1:]):
+        current_bottom = current.mapToItem(root, QPointF(0, current.height())).y()
+        following_top = following.mapToItem(root, QPointF(0, 0)).y()
+        assert following_top >= current_bottom + 1
+    assert max(item.height() for item in bubbles) < 180
 
 
 def test_ai_and_platform_echo_share_one_outgoing_group(qapp):

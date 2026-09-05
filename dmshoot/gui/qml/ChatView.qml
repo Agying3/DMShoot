@@ -347,20 +347,24 @@ Item {
                         id: bubbleRow
                         objectName: "bubbleRow"
                         width: stack.width
-                        height: bubble.height
+                        height: bubble.height + topGap
                         property var message: group.rows[index]
                         property bool outgoing: message ? message.isSelf : false
                         property real maxWidth: Math.min(480, Math.max(140, stack.width * 0.65))
+                        property real topGap: message ? (message.gapBefore || 0) : 0
 
                         Item {
                             id: bubble
+                            objectName: "bubbleSurface"
                             width: message ? Math.min(maxWidth, Math.max(72,
                                 15 + (message.tailSide === "left" ? 6 : 0) +
                                 message.naturalWidth + (message.metaWidth > 0 ? 4 + message.metaWidth : 0))) : 72
-                            height: Math.max(30, contentRenderer.height + 9)
+                            height: Math.max(30, contentText.contentHeight + 9)
+                            y: bubbleRow.topGap
                             x: bubbleRow.outgoing ? bubbleRow.width - width -
                                 (message && message.tailSide === "" ? 6 : 0) :
-                                (message && message.tailSide === "left" ? 6 : 0)
+                                (message && message.tailSide === "left" ? 0 : 6)
+                            property real bodyLeft: x + (message && message.tailSide === "left" ? 6 : 0)
 
                             property string pathData: message ? makePath(width, height, message.radii, message.tailSide) : ""
 
@@ -407,52 +411,25 @@ Item {
                                 }
                             }
 
-                            Loader {
-                                id: contentRenderer
+                            TextEdit {
+                                id: contentText
+                                objectName: "bubbleText"
                                 x: message && message.tailSide === "left" ? 14 : 8
                                 y: 4
                                 width: Math.max(1, bubble.width - x - 7 -
                                     (message && message.metaWidth > 0 ? message.metaWidth + 4 : 0))
-                                height: item ? item.height : 20
-                                property var itemMessage: message
-                                sourceComponent: message && message.hasLinks ? richTextComponent : plainTextComponent
-                            }
-
-                            Component {
-                                id: plainTextComponent
-                                TextEdit {
-                                    width: contentRenderer.width
-                                    height: Math.max(20, contentHeight)
-                                    text: contentRenderer.itemMessage ? contentRenderer.itemMessage.plainContent : ""
-                                    textFormat: TextEdit.PlainText
-                                    color: "#FFFFFF"
-                                    font.family: chatRoot.contentFamily
-                                    font.pixelSize: 16
-                                    wrapMode: TextEdit.Wrap
-                                    readOnly: true
-                                    selectByMouse: true
-                                    selectByKeyboard: true
-                                    persistentSelection: false
-                                }
-                            }
-
-                            Component {
-                                id: richTextComponent
-                                TextEdit {
-                                    width: contentRenderer.width
-                                    height: Math.max(20, contentHeight)
-                                    text: contentRenderer.itemMessage ? contentRenderer.itemMessage.richContent : ""
-                                    textFormat: TextEdit.RichText
-                                    color: "#FFFFFF"
-                                    font.family: chatRoot.contentFamily
-                                    font.pixelSize: 16
-                                    wrapMode: TextEdit.Wrap
-                                    readOnly: true
-                                    selectByMouse: true
-                                    selectByKeyboard: true
-                                    persistentSelection: false
-                                    onLinkActivated: chatRoot.linkActivated(link)
-                                }
+                                height: Math.max(20, contentHeight)
+                                text: message ? (message.hasLinks ? message.richContent : message.plainContent) : ""
+                                textFormat: message && message.hasLinks ? TextEdit.RichText : TextEdit.PlainText
+                                color: "#FFFFFF"
+                                font.family: chatRoot.contentFamily
+                                font.pixelSize: 16
+                                wrapMode: TextEdit.Wrap
+                                readOnly: true
+                                selectByMouse: true
+                                selectByKeyboard: true
+                                persistentSelection: false
+                                onLinkActivated: chatRoot.linkActivated(link)
                             }
 
                             Row {
