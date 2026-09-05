@@ -938,7 +938,10 @@ class ChatView(QWidget):
 
     def append_message(self, message: ChatMessage):
         was_at_bottom = self._at_bottom
-        self._messages.append(message)
+        merged = deduplicate_messages(self._messages + [message])
+        if len(merged) == len(self._messages):
+            return
+        self._messages = merged
         if self._legacy is not None:
             self._legacy.append_message(message)
             return

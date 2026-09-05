@@ -359,6 +359,8 @@ Item {
                             width: message ? Math.min(maxWidth, Math.max(72,
                                 15 + (message.tailSide === "left" ? 6 : 0) +
                                 message.naturalWidth + (message.metaWidth > 0 ? 4 + message.metaWidth : 0))) : 72
+                            // 文本高度是气泡的唯一垂直来源；元信息只占右下角，
+                            // 不能再让复用中的旧 Loader 高度参与计算。
                             height: Math.max(30, contentText.contentHeight + 9)
                             y: bubbleRow.topGap
                             x: bubbleRow.outgoing ? bubbleRow.width - width -
@@ -424,7 +426,7 @@ Item {
                                 color: "#FFFFFF"
                                 font.family: chatRoot.contentFamily
                                 font.pixelSize: 16
-                                wrapMode: TextEdit.Wrap
+                                wrapMode: TextEdit.WrapAtWordBoundaryOrAnywhere
                                 readOnly: true
                                 selectByMouse: true
                                 selectByKeyboard: true

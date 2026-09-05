@@ -9,7 +9,7 @@
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 from dmshoot.storage.models import SessionRecord, ChatMessage, AppConfig
 from dmshoot.utils.console_log import get_logger
@@ -417,6 +417,22 @@ def delete_messages(platform: str) -> int:
     conn = _get_conn()
     with _lock:
         cur = conn.execute("DELETE FROM messages WHERE platform=?", (platform,))
+        conn.commit()
+    return cur.rowcount
+
+
+def delete_messages_for_sessions(session_ids: Iterable[str]) -> int:
+    """删除指定会话的消息，供历史格式迁移清理孤儿记录。"""
+    ids = [str(session_id) for session_id in session_ids if session_id]
+    if not ids:
+        return 0
+    conn = _get_conn()
+    with _lock:
+        placeholders = ",".join("?" for _ in ids)
+        cur = conn.execute(
+            f"DELETE FROM messages WHERE session_id IN ({placeholders})",
+            ids,
+        )
         conn.commit()
     return cur.rowcount
 

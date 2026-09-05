@@ -1,5 +1,6 @@
 """稳定版 protobuf 消息提取器 v2"""
 import json
+import re
 from dmshoot.utils.douyin_ws import _decode_timestamp
 
 
@@ -25,6 +26,33 @@ def _message_identity(message: dict) -> tuple:
         str(message.get('msg_index', 0)),
         message.get('content', ''),
     )
+
+
+def _peer_uid_before_content(
+    raw: bytes,
+    start: int,
+    end: int,
+    my_uid: str,
+) -> str:
+    """从当前消息前的局部 protobuf 元数据提取真实对方 UID。
+
+    抖音的会话标识以字符串形式嵌在消息元数据中：
+    ``0:1:{peer_uid}:{my_uid}``。它和正文不在同一个 protobuf field，
+    因此只能按当前正文边界做局部关联，不能拿 conversation_short_id 代替。
+    """
+    if not my_uid:
+        return ""
+    my_uid_bytes = my_uid.encode("ascii", errors="ignore")
+    if not my_uid_bytes:
+        return ""
+    pattern = re.compile(rb"0:1:(\d+):" + re.escape(my_uid_bytes))
+    window_start = max(start, end - 1500)
+    matches = list(pattern.finditer(raw, window_start, end))
+    for match in reversed(matches):
+        peer_uid = match.group(1).decode("ascii", errors="ignore")
+        if peer_uid and peer_uid != my_uid:
+            return peer_uid
+    return ""
 
 def extract_messages_from_protobuf(raw: bytes, my_uid: str = "") -> list[dict]:
     """从 im_init protobuf 提取消息列表"""
@@ -58,6 +86,7 @@ def extract_messages_from_protobuf(raw: bytes, my_uid: str = "") -> list[dict]:
         content_end = j + content_len
         metadata_start = metadata_floor
         metadata_floor = content_end
+        peer_uid = _peer_uid_before_content(raw, metadata_start, i, my_uid)
         
         # ── 就近扫描 sender (field 7 = 0x38) ──
         # field 7 通常就在 content 前面 10~200 字节内
@@ -132,6 +161,7 @@ def extract_messages_from_protobuf(raw: bytes, my_uid: str = "") -> list[dict]:
                 'content': text,
                 'timestamp': ts,
                 'is_self': str(sender_uid) == my_uid,
+                'peer_uid': peer_uid,
                 'msg_index': msg_index or 0,
                 'conv_short_id': conv_short_str,
                 'server_message_id': server_msg_id or 0,

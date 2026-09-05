@@ -26,6 +26,24 @@ _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent  # plugins/douyin →
 # 去重全走 DB 唯一索引 + 内存 set，不持久化文件
 
 
+def _history_peer_uid(message: dict, my_uid: str, conv_to_peer: dict[str, str]) -> str:
+    """返回历史消息所属会话的真实对方 UID。
+
+    旧实现把我方消息的 conversation_short_id 当成 peer UID，导致双方
+    被写入两个不同 session_id。解析器已经提供 peer_uid 时优先使用，
+    映射只作为兼容没有局部会话字符串的缓存消息的兜底。
+    """
+    sender_uid = str(message.get("sender_uid") or "")
+    if not bool(message.get("is_self")):
+        return sender_uid if sender_uid != my_uid else ""
+    peer_uid = str(message.get("peer_uid") or "")
+    if not peer_uid:
+        peer_uid = str(conv_to_peer.get(str(message.get("conv_short_id") or "")) or "")
+    if not peer_uid or peer_uid == my_uid:
+        return ""
+    return peer_uid
+
+
 class DouyinAdapter(BaseAdapter):
     platform_name = "douyin"
 
@@ -228,12 +246,41 @@ class DouyinAdapter(BaseAdapter):
             cached_msgs = self._client.get_cached_messages()
             saved_count = 0
             if cached_msgs:
+                # 先建立 conversation_short_id -> peer_uid 映射，确保同一会话
+                # 中先出现我方消息时也能归到正确联系人。
+                history_conv_to_peer: dict[str, str] = {}
+                for msg in cached_msgs:
+                    conv_id = str(msg.get("conv_short_id") or "")
+                    peer_uid = str(msg.get("peer_uid") or "")
+                    sender_uid = str(msg.get("sender_uid") or "")
+                    if conv_id and peer_uid and peer_uid != self._my_uid:
+                        history_conv_to_peer.setdefault(conv_id, peer_uid)
+                    elif conv_id and sender_uid and not msg.get("is_self"):
+                        history_conv_to_peer.setdefault(conv_id, sender_uid)
+                self._conv_to_peer.update(history_conv_to_peer)
+
+                # 清理此前版本把 conversation_short_id 当 peer UID 写入的孤儿消息。
+                # 只删除本批明确识别出的错误 session，不影响其他平台或正常会话。
+                legacy_session_ids = {
+                    f"douyin:0:1:{conv_id}:{self._my_uid}:0:"
+                    for conv_id, peer_uid in history_conv_to_peer.items()
+                    if conv_id and conv_id != peer_uid
+                }
+                if legacy_session_ids:
+                    database.delete_messages_for_sessions(legacy_session_ids)
+
                 batch: list[ChatMessage] = []
                 for msg in cached_msgs:
                     sender_uid = msg.get('sender_uid', '')
                     content = msg.get('content', '')
                     is_self = msg.get('is_self', False)
-                    peer_uid = sender_uid if not is_self else (msg.get('conv_short_id', '') or sender_uid)
+                    peer_uid = _history_peer_uid(msg, self._my_uid, history_conv_to_peer)
+                    if not peer_uid:
+                        logger.debug(
+                            "跳过无法确定会话归属的抖音历史消息: "
+                            f"sender={sender_uid} conv={msg.get('conv_short_id', '')}"
+                        )
+                        continue
                     ts = msg.get('timestamp', time.time())
                     server_id = msg.get('server_message_id', 0)
                     msg_index = msg.get('msg_index', 0)
