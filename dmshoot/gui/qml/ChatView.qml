@@ -139,7 +139,8 @@ Item {
         model: chatModel
         spacing: 9
         topMargin: 8
-        bottomMargin: 8
+        // 给最后一条消息留出完整滚动空间，避免被底部输入/状态区域裁掉。
+        bottomMargin: 72
         // 只缓存视口附近少量分组，降低快速上滑时的 delegate 创建成本。
         cacheBuffer: 320
         reuseItems: true
@@ -265,7 +266,7 @@ Item {
             objectName: "messageGroup"
             width: parent ? parent.width : 0
             // 不能让短气泡把 36px 头像裁掉或压到下一组上。
-            height: Math.max(avatarSize, stack.height)
+            height: Math.max(avatarSize, stack.height + 2)
             property bool outgoing: parent ? parent.itemIsSelf : false
             property real avatarSize: 36
             property string senderName: parent ? parent.itemSenderName : ""
@@ -347,7 +348,7 @@ Item {
                         id: bubbleRow
                         objectName: "bubbleRow"
                         width: stack.width
-                        height: bubble.height + topGap
+                        height: topGap + bubble.height + 2
                         property var message: group.rows[index]
                         property bool outgoing: message ? message.isSelf : false
                         property real maxWidth: Math.min(480, Math.max(140, stack.width * 0.65))
@@ -361,7 +362,7 @@ Item {
                                 message.naturalWidth + (message.metaWidth > 0 ? 4 + message.metaWidth : 0))) : 72
                             // 文本高度是气泡的唯一垂直来源；元信息只占右下角，
                             // 不能再让复用中的旧 Loader 高度参与计算。
-                            height: Math.max(30, contentText.contentHeight + 9)
+                            height: Math.max(30, contentText.contentHeight + 11)
                             y: bubbleRow.topGap
                             x: bubbleRow.outgoing ? bubbleRow.width - width -
                                 (message && message.tailSide === "" ? 6 : 0) :
