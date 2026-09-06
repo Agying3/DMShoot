@@ -158,12 +158,25 @@ Item {
         wheelDirection = direction
         lastWheelTime = now
 
-        // 第一帧立即移动，消除“滚了但页面还不动”的迟滞。
+        // 先取消上一段运动，再直接写入第一帧位置，保证滚轮输入立即可见。
+        // 旧 flick 若继续存在，会在这一帧之后重新接管 contentY，造成迟滞或回弹。
+        var previousY = messageList.contentY
+        messageList.cancelFlick()
         var immediate = delta * wheelImmediateFactor
         var nextY = clampContentY(messageList.contentY - immediate)
         boundaryLock = 0
         boundarySettleTimer.stop()
         messageList.contentY = nextY
+        var actualY = messageList.contentY
+
+        // 虚拟 ListView 的 contentHeight 可能是估算值。若 Qt 将写入值
+        // 立即压回，说明已撞到真实边界，此时不能再启动 flick。
+        if (Math.abs(actualY - nextY) > 0.5
+                || (direction > 0 && actualY >= previousY - 0.5 && nextY <= 0)
+                || (direction < 0 && actualY <= previousY + 0.5 && nextY >= previousY)) {
+            settleBoundary(direction > 0 ? 1 : -1)
+            return
+        }
 
         // 当前速度由 Flickable 自己维护。连续同向输入叠加原生速度，
         // 反向输入先取消旧 flick，避免边界附近或反向时出现回弹。
