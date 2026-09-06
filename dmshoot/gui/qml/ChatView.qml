@@ -95,7 +95,8 @@ Item {
     function scrollByWheel(delta, animate) {
         messageList.cancelFlick()
         var maximum = Math.max(0, messageList.contentHeight - messageList.height)
-        var target = Math.max(0, Math.min(maximum, messageList.contentY - delta))
+        var base = wheelAnimation.running ? wheelAnimation.to : messageList.contentY
+        var target = Math.max(0, Math.min(maximum, base - delta))
         if (animate) {
             wheelAnimation.to = target
             wheelAnimation.restart()
@@ -198,7 +199,7 @@ Item {
         id: wheelAnimation
         target: messageList
         property: "contentY"
-        duration: 90
+        duration: 150
         easing.type: Easing.OutCubic
     }
 
@@ -270,13 +271,16 @@ Item {
             property bool outgoing: parent ? parent.itemIsSelf : false
             property real avatarSize: 36
             property string senderName: parent ? parent.itemSenderName : ""
-            property string avatarText: parent ? parent.itemAvatarText : ""
-            property string avatarSource: parent ? parent.itemAvatarSource : ""
-            property var rows: parent ? (parent.itemMessages || []) : []
-            property int rowCount: rows ? rows.length : 0
+             property string avatarText: parent ? parent.itemAvatarText : ""
+             property string avatarSource: parent ? parent.itemAvatarSource : ""
+             property var rows: parent ? (parent.itemMessages || []) : []
+             property int rowCount: rows ? rows.length : 0
+             property real messageStackBottom: stack.y + stack.height
             // Loader 的 y 已经是 ListView contentItem 坐标，直接扣除 contentY
             // 得到视口位置，避免滚动中反复做 mapToItem 坐标映射。
-            property real visibleGroupTop: parent ? parent.itemContentY - messageList.contentY : 0
+             // 使用 delegate 在滚动内容中的真实位置。itemContentY 由 Loader
+             // 提供，但保留 contentY 依赖，确保滚动时头像实时重新定位。
+             property real visibleGroupTop: parent ? parent.itemContentY - messageList.contentY : 0
 
             Item {
                 id: avatarSlot
@@ -295,7 +299,9 @@ Item {
                     color: "#394B63"
                     // 头像默认贴在组底；组靠近视口底部时随消息向上顶，
                     // 但永远不会越过本组顶部或落到下一组。
-                    y: Math.max(0, Math.min(group.height - height,
+                    // 正常状态贴在本组最后一条消息底部；只有组底超出
+                    // 视口底部时才向上顶，不允许头像漂到别的消息组。
+                    y: Math.max(0, Math.min(group.messageStackBottom - height,
                         messageList.height - height - 4 - group.visibleGroupTop))
 
                     Image {
@@ -328,6 +334,7 @@ Item {
                 x: group.outgoing ? 0 : 52
                 width: Math.max(1, group.width - 52)
                 spacing: 2
+                height: childrenRect.height
 
                 Text {
                     visible: !group.outgoing && group.senderName !== ""
@@ -348,7 +355,11 @@ Item {
                         id: bubbleRow
                         objectName: "bubbleRow"
                         width: stack.width
-                        height: topGap + bubble.height + 2
+                        // The row owns the complete vertical footprint. This keeps
+                        // Column from placing the next bubble before TextEdit has
+                        // finished measuring a wrapped message.
+                        height: topGap + Math.max(30, bubble.height,
+                            contentText.contentHeight + 11) + 2
                         property var message: group.rows[index]
                         property bool outgoing: message ? message.isSelf : false
                         property real maxWidth: Math.min(480, Math.max(140, stack.width * 0.65))
@@ -362,7 +373,7 @@ Item {
                                 message.naturalWidth + (message.metaWidth > 0 ? 4 + message.metaWidth : 0))) : 72
                             // 文本高度是气泡的唯一垂直来源；元信息只占右下角，
                             // 不能再让复用中的旧 Loader 高度参与计算。
-                            height: Math.max(30, contentText.contentHeight + 11)
+                            height: Math.max(30, contentText.height + 11)
                             y: bubbleRow.topGap
                             x: bubbleRow.outgoing ? bubbleRow.width - width -
                                 (message && message.tailSide === "" ? 6 : 0) :

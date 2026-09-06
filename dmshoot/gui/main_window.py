@@ -397,7 +397,7 @@ class MarkdownViewer(QDialog):
 class MainWindow(QMainWindow):
     # AI 连接测试结果信号（跨线程安全）
     _ai_test_result = QtSignal(bool, str)  # (成功, 消息)
-    _send_result = QtSignal(str, str, str, bool)  # session_id, platform, text, ok
+    _send_result = QtSignal(str, str, str, str, bool)  # session_id, platform, text, message_key, ok
     _settings_ready = QtSignal()
 
     def __init__(self):
@@ -861,17 +861,22 @@ class MainWindow(QMainWindow):
         else:
             logger.info(f"[发送准备] {platform} adapter={adapter.platform_name}")
 
-        for part in parts:
-            # 保存到 DB
+        pending_parts = []
+        for index, part in enumerate(parts):
+            # Give every optimistic bubble a stable key so a failed send can
+            # remove exactly that message, even when the text is duplicated.
+            message_key = f"local-ai:{session_id}:{time.time_ns()}:{index}"
             ts = time.time()
             rm = ChatMessage(session_id=session_id, sender_name="AI",
                              sender_id="ai", content=part, is_auto=True,
-                             persona=persona, timestamp=ts)
+                             persona=persona, timestamp=ts, message_key=message_key)
             database.save_message(rm)
-            # 网络发送在后台完成，Qt 主线程只更新本地界面。
-            self.page_home.add_message(session_id, persona, part, is_auto=True,
-                                       persona=persona, sender_id="ai",
-                                       send_ok=bool(adapter))
+            if adapter:
+                # 网络发送在后台完成，Qt 主线程只更新本地界面。
+                self.page_home.add_message(session_id, persona, part, is_auto=True,
+                                           persona=persona, sender_id="ai",
+                                           message_key=message_key, send_ok=True)
+                pending_parts.append((part, message_key))
 
         if adapter:
             from dmshoot.core.concurrency import ConcurrencyManager
@@ -883,7 +888,7 @@ class MainWindow(QMainWindow):
                 adapter,
                 session_id,
                 platform,
-                list(parts),
+                pending_parts,
             )
 
         # 更新会话最后消息
@@ -900,10 +905,16 @@ class MainWindow(QMainWindow):
                        else (parts[0] if parts else reply_text))
         self.monitor.add_reply_log(trigger_msg, reply_text)
 
-    def _send_ai_parts(self, adapter, session_id: str, platform: str, parts: list[str]):
+    def _send_ai_parts(
+        self,
+        adapter,
+        session_id: str,
+        platform: str,
+        parts: list[tuple[str, str]],
+    ):
         """在线程池中顺序发送 AI 回复，避免网络请求和间隔等待冻结窗口。"""
         import time as _sleep_time
-        for index, part in enumerate(parts):
+        for index, (part, message_key) in enumerate(parts):
             if index > 0:
                 _sleep_time.sleep(0.8)
             try:
@@ -912,13 +923,22 @@ class MainWindow(QMainWindow):
                 logger.exception(f"[{platform}] 后台发送异常")
                 ok = False
             try:
-                self._send_result.emit(session_id, platform, part, ok)
+                self._send_result.emit(session_id, platform, part, message_key, ok)
             except RuntimeError:
                 return
 
-    def _on_send_result(self, session_id: str, platform: str, text: str, ok: bool):
+    def _on_send_result(
+        self,
+        session_id: str,
+        platform: str,
+        text: str,
+        message_key: str,
+        ok: bool,
+    ):
         if ok:
             return
+        database.delete_message(session_id, message_key)
+        self.page_home.remove_message(session_id, message_key)
         persona = self.config.prompt_preset or "AI"
         logger.error(f"[发送失败] {platform} → session={session_id}: '{text[:30]}'")
         self.bus.log.emit("ERROR", persona, f"发送失败: {text[:20]}...")

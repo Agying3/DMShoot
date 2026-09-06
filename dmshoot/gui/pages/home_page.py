@@ -197,6 +197,10 @@ class HomePage(QWidget):
                      unread_count: int = -1, send_ok: bool = True,
                      sender_id: str = "", message_key: str = "", is_self: bool = False):
         """添加新消息到缓存和界面。缓存按时间排序，保证上旧下新顺序。"""
+        # 发送失败或没有可用适配器的 AI 回复不能进入正常聊天列表。
+        # 成功发送的消息仍可先乐观展示，失败回调再按 message_key 撤回。
+        if not send_ok:
+            return
         from dmshoot.storage.models import ChatMessage
         import time as _time
         now = _time.time()
@@ -227,3 +231,15 @@ class HomePage(QWidget):
         # 增量更新通讯录（不查 DB，只更新文字）
         if not self.contacts.update_one_session(session_id, content, ts, unread_count):
             self.refresh_session(session_id)
+
+    def remove_message(self, session_id: str, message_key: str):
+        """撤掉发送失败的本地消息，避免它继续伪装成已发送消息。"""
+        if not message_key:
+            return
+        cache = self._msg_cache.get(session_id, [])
+        self._msg_cache[session_id] = [
+            message for message in cache
+            if message.message_key != message_key
+        ]
+        if self._current_session == session_id:
+            self.chat.remove_message(message_key)

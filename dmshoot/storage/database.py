@@ -539,6 +539,20 @@ def save_message(msg: ChatMessage) -> bool:
     return inserted
 
 
+def delete_message(session_id: str, message_key: str) -> int:
+    """删除指定会话中的一条本地消息，返回实际删除行数。"""
+    if not session_id or not message_key:
+        return 0
+    conn = _get_conn()
+    with _lock:
+        cur = conn.execute(
+            "DELETE FROM messages WHERE session_id = ? AND message_key = ?",
+            (session_id, message_key),
+        )
+        conn.commit()
+    return cur.rowcount
+
+
 def save_incoming_message(session: SessionRecord, msg: ChatMessage) -> tuple[bool, int]:
     """用一次事务保存入站消息、更新会话并递增未读。"""
     import time as _time

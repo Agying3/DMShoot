@@ -70,6 +70,38 @@ def test_consecutive_messages_share_one_tg_avatar_group(qapp):
     assert model._items[0]["avatarText"] == "Alice"
 
 
+def test_quick_model_can_remove_failed_message(qapp):
+    from dmshoot.gui.quick_chat_view import ChatMessageModel
+
+    messages = _messages(3)
+    messages[1].message_key = "local-ai:failed"
+    model = ChatMessageModel()
+    model.set_messages(messages)
+
+    assert model.remove_message(messages[1].message_key) is True
+    assert [item.content for item in model.messages] == [messages[0].content, messages[2].content]
+    assert model.remove_message("key:missing") is False
+
+
+def test_home_page_does_not_add_unsent_message(qapp):
+    from dmshoot.gui.pages.home_page import HomePage
+
+    page = HomePage.__new__(HomePage)
+    page._msg_cache = {}
+    page._current_session = ""
+
+    page.add_message(
+        "bilibili:unsent",
+        "AI",
+        "这条发送失败",
+        is_auto=True,
+        send_ok=False,
+        message_key="local-ai:failed",
+    )
+
+    assert page._msg_cache == {}
+
+
 def test_sender_interruption_still_breaks_avatar_group(qapp):
     from dmshoot.gui.quick_chat_view import ChatMessageModel
     from dmshoot.storage.models import ChatMessage

@@ -234,6 +234,14 @@ def _message_key(message: ChatMessage) -> str:
     )
 
 
+def _message_matches_key(message: ChatMessage, message_key: str) -> bool:
+    """兼容数据库原始键和 QML 内部稳定键。"""
+    return bool(message_key) and (
+        message_key == _message_key(message)
+        or message_key == message.message_key
+    )
+
+
 def _format_time(message: ChatMessage) -> str:
     timestamp = message.timestamp or 0
     if timestamp <= 0:
@@ -422,6 +430,20 @@ class ChatMessageModel(QAbstractListModel):
         self.beginInsertRows(QModelIndex(), first, last_index)
         self._items.extend(new_items)
         self.endInsertRows()
+
+    def remove_message(self, message_key: str) -> bool:
+        """按稳定键移除一条待发送或发送失败的消息。"""
+        if not message_key:
+            return False
+        kept = [
+            message for message in self._messages
+            if not _message_matches_key(message, message_key)
+        ]
+        if len(kept) == len(self._messages):
+            return False
+        self._messages = kept
+        self._reset_items()
+        return True
 
     @Slot(str, result=int)
     def groupIndexForMessage(self, message_key: str) -> int:
@@ -948,6 +970,30 @@ class ChatView(QWidget):
         self._model.append_message(message)
         if self._root is not None:
             self._root.notifyAppended(was_at_bottom)
+
+    def remove_message(self, message_key: str) -> bool:
+        """从 Quick 或 QWidget 降级视图移除发送失败的本地消息。"""
+        if not message_key:
+            return False
+        before = len(self._messages)
+        self._messages = [
+            message for message in self._messages
+            if not _message_matches_key(message, message_key)
+        ]
+        if len(self._messages) == before:
+            return False
+        if self._legacy is not None:
+            self._legacy.load_messages(
+                self.title_label.text(),
+                self._messages,
+                self._peer_avatar_url,
+                self._my_avatar_url,
+            )
+            return True
+        self._model.remove_message(message_key)
+        if self._root is not None:
+            self._root.loadMessages()
+        return True
 
     def _is_near_bottom(self) -> bool:
         if self._legacy is not None:

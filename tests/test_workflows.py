@@ -361,6 +361,28 @@ class TestMessageHistory:
         assert database.save_message(repush) is False
         assert len(database.get_messages("douyin:peer")) == 1
 
+    def test_delete_message_removes_only_failed_local_message(self, temp_db):
+        """发送失败回滚只能删除目标键，不能误删同正文消息。"""
+        from dmshoot.storage import database
+        from dmshoot.storage.models import ChatMessage
+
+        failed = ChatMessage(
+            session_id="test:failed", sender_name="AI", sender_id="ai",
+            content="重复正文", timestamp=1000.0,
+            is_auto=True, message_key="local-ai:failed",
+        )
+        kept = ChatMessage(
+            session_id="test:failed", sender_name="AI", sender_id="ai",
+            content="重复正文", timestamp=1100.0,
+            is_auto=True, message_key="local-ai:kept",
+        )
+        assert database.save_message(failed) is True
+        assert database.save_message(kept) is True
+
+        assert database.delete_message("test:failed", "local-ai:failed") == 1
+        history = database.get_messages("test:failed")
+        assert [item.message_key for item in history] == ["local-ai:kept"]
+
     def test_bus_message_uses_shared_persistence_path(self, temp_db):
         """桌面消息统一经过同一条持久化事务。"""
         from dmshoot.core.message import Message
