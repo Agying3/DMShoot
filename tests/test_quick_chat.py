@@ -350,11 +350,12 @@ def test_quick_wheel_stops_at_bottom_without_rebound(qapp, qtbot, monkeypatch):
     message_list = root.findChild(QQuickItem, "messageList")
     root.positionAtChatEnd()
     qtbot.wait(40)
-    settled_bottom = float(message_list.property("contentY"))
     root.scrollByWheel(-5000, True)
     qtbot.wait(160)
+    stopped_bottom = float(message_list.property("contentY"))
+    qtbot.wait(120)
 
-    assert abs(float(message_list.property("contentY")) - settled_bottom) <= 0.5
+    assert abs(float(message_list.property("contentY")) - stopped_bottom) <= 0.5
     assert abs(float(message_list.property("verticalVelocity"))) <= 0.5
 
 

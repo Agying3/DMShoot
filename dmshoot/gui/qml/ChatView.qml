@@ -26,10 +26,6 @@ Item {
     property int wheelBurstLevel: 0
     property int wheelDirection: 0
     property real lastWheelTime: 0
-    // 记录正在等待布局稳定的边界，避免 contentHeight 增长后停在旧边界。
-    property int boundaryLock: 0 // 1 = top, -1 = bottom
-    property int boundarySettleTicks: 0
-    property bool boundaryAdjusting: false
 
     function isNearBottom() {
         return messageList.atYEnd || messageList.contentY >= messageList.contentHeight - messageList.height - 60
@@ -110,26 +106,11 @@ Item {
     }
 
     function positionAtChatEnd() {
-        if (boundaryAdjusting)
-            return
-        boundaryAdjusting = true
         messageList.forceLayout()
         if (messageList.count > 0)
             messageList.positionViewAtIndex(messageList.count - 1, ListView.End)
         else
             messageList.contentY = 0
-        boundaryAdjusting = false
-    }
-
-    function settleBoundary(lock) {
-        boundaryLock = lock
-        boundarySettleTicks = 0
-        boundarySettleTimer.start()
-        messageList.cancelFlick()
-        if (lock > 0)
-            messageList.positionViewAtBeginning()
-        else
-            positionAtChatEnd()
     }
 
     function scrollByWheel(delta, animate) {
@@ -140,16 +121,9 @@ Item {
             wheelBurstLevel = 0
             wheelDirection = 0
             lastWheelTime = 0
-            boundaryLock = 0
-            boundarySettleTimer.stop()
             messageList.cancelFlick()
             var directY = clampContentY(messageList.contentY - delta)
             messageList.contentY = directY
-            var directMaximum = Math.max(0, messageList.contentHeight - messageList.height)
-            if (directY <= 0 && delta > 0)
-                settleBoundary(1)
-            else if (directY >= directMaximum && delta < 0)
-                settleBoundary(-1)
             return
         }
 
@@ -169,8 +143,6 @@ Item {
         messageList.cancelFlick()
         var immediate = delta * wheelImmediateFactor
         var nextY = clampContentY(messageList.contentY - immediate)
-        boundaryLock = 0
-        boundarySettleTimer.stop()
         messageList.contentY = nextY
         var actualY = messageList.contentY
 
@@ -179,7 +151,8 @@ Item {
         if (Math.abs(actualY - nextY) > 0.5
                 || (direction > 0 && actualY >= previousY - 0.5 && nextY <= 0)
                 || (direction < 0 && actualY <= previousY + 0.5 && nextY >= previousY)) {
-            settleBoundary(direction > 0 ? 1 : -1)
+            messageList.cancelFlick()
+            messageList.contentY = actualY
             return
         }
 
@@ -200,7 +173,8 @@ Item {
         )
         var maximum = Math.max(0, messageList.contentHeight - messageList.height)
         if ((nextY <= 0 && velocity > 0) || (nextY >= maximum && velocity < 0)) {
-            settleBoundary(nextY <= 0 ? 1 : -1)
+            messageList.cancelFlick()
+            messageList.contentY = nextY
             return
         }
         messageList.flick(0, velocity)
@@ -276,17 +250,6 @@ Item {
                 contentY = Math.max(0, Math.min(maximum, contentY))
                 return
             }
-            if (chatRoot.boundaryLock !== 0 && !chatRoot.boundaryAdjusting) {
-                var atLockedBoundary = chatRoot.boundaryLock > 0 ? atYBeginning : atYEnd
-                if (!atLockedBoundary) {
-                    cancelFlick()
-                    if (chatRoot.boundaryLock > 0)
-                        positionViewAtBeginning()
-                    else
-                        positionViewAtEnd()
-                    return
-                }
-            }
             updateBottomState()
             if (!chatRoot.suppressHistory && chatRoot.historyAvailable && !chatRoot.historyPending
                     && contentY <= 20 && contentHeight > height + 20) {
@@ -294,40 +257,8 @@ Item {
                 chatRoot.historyRequested()
             }
         }
-        onContentHeightChanged: {
-            updateBottomState()
-            if (chatRoot.boundaryLock !== 0 && !chatRoot.boundaryAdjusting) {
-                cancelFlick()
-                if (chatRoot.boundaryLock > 0)
-                    positionViewAtBeginning()
-                else
-                    positionViewAtEnd()
-            }
-        }
+        onContentHeightChanged: updateBottomState()
         onMovementEnded: updateBottomState()
-    }
-
-    // 只处理 delegate 异步测量造成的边界变化，不驱动普通滚动。
-    Timer {
-        id: boundarySettleTimer
-        objectName: "boundarySettleTimer"
-        interval: 16
-        repeat: true
-        onTriggered: {
-            if (chatRoot.boundaryLock === 0) {
-                stop()
-                return
-            }
-            messageList.forceLayout()
-            messageList.cancelFlick()
-            if (chatRoot.boundaryLock > 0)
-                messageList.positionViewAtBeginning()
-            else
-                positionAtChatEnd()
-            boundarySettleTicks += 1
-            if (boundarySettleTicks >= 32)
-                stop()
-        }
     }
 
     WheelHandler {
