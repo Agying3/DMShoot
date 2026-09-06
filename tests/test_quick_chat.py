@@ -299,26 +299,26 @@ def test_quick_wheel_scroll_has_direct_touchpad_and_animated_mouse_paths(qapp, q
     assert root.findChild(QObject, "chatWheelHandler") is not None
     assert root.findChild(QObject, "wheelMotionTimer") is None
     assert root.findChild(QObject, "wheelBurstResetTimer") is None
-    assert root.property("mouseWheelStep") == 96
-    assert root.property("wheelSensitivity") == 10
+    assert root.property("mouseWheelStep") == 120
+    assert root.property("wheelSensitivity") == 18
     assert message_list.property("interactive") is True
-    assert message_list.property("maximumFlickVelocity") == 8000
-    assert message_list.property("flickDeceleration") == 1800
+    assert message_list.property("maximumFlickVelocity") == 12000
+    assert message_list.property("flickDeceleration") == 900
 
     at_end = float(message_list.property("contentY"))
-    root.scrollByWheel(96, False)
+    root.scrollByWheel(120, False)
     touchpad_y = float(message_list.property("contentY"))
     assert touchpad_y < at_end
     assert at_end - touchpad_y > 0
 
     before_flick = float(message_list.property("contentY"))
-    root.scrollByWheel(96, True)
+    root.scrollByWheel(120, True)
     qtbot.wait(24)
     first_velocity = float(message_list.property("verticalVelocity"))
     assert float(message_list.property("contentY")) < before_flick
     assert first_velocity < 0
     first_burst = int(root.property("wheelBurstLevel"))
-    root.scrollByWheel(96, True)
+    root.scrollByWheel(120, True)
     assert int(root.property("wheelBurstLevel")) == first_burst + 1
     qtbot.wait(24)
     second_velocity = float(message_list.property("verticalVelocity"))
@@ -326,7 +326,7 @@ def test_quick_wheel_scroll_has_direct_touchpad_and_animated_mouse_paths(qapp, q
     qtbot.wait(180)
     assert float(message_list.property("contentY")) < touchpad_y
     before_reverse = float(message_list.property("contentY"))
-    root.scrollByWheel(-96, True)
+    root.scrollByWheel(-120, True)
     assert int(root.property("wheelBurstLevel")) == 1
     qtbot.wait(24)
     assert float(message_list.property("contentY")) > before_reverse

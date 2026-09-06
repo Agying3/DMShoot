@@ -19,10 +19,10 @@ Item {
     property bool bottomStateKnown: false
     property bool lastAtBottom: true
     // 滚轮只负责把输入交给 ListView 的原生 Flickable 物理。
-    property real mouseWheelStep: 96
-    property real wheelSensitivity: 10.0
-    property real wheelMaxVelocity: 8000
-    property real wheelImmediateFactor: 0.55
+    property real mouseWheelStep: 120
+    property real wheelSensitivity: 18.0
+    property real wheelMaxVelocity: 12000
+    property real wheelImmediateFactor: 0.75
     property int wheelBurstLevel: 0
     property int wheelDirection: 0
     property real lastWheelTime: 0
@@ -230,8 +230,8 @@ Item {
         displayMarginBeginning: 0
         displayMarginEnd: 0
         pixelAligned: false
-        maximumFlickVelocity: 8000
-        flickDeceleration: 1800
+        maximumFlickVelocity: 12000
+        flickDeceleration: 900
         boundsBehavior: Flickable.StopAtBounds
         boundsMovement: Flickable.StopAtBounds
         delegate: Loader {
