@@ -280,7 +280,7 @@ def test_quick_scroll_only_notifies_when_bottom_state_changes(qapp, qtbot, monke
 
 @pytest.mark.gui
 def test_quick_wheel_scroll_has_direct_touchpad_and_animated_mouse_paths(qapp, qtbot, monkeypatch):
-    """触控板像素滚动跟手，鼠标滚轮使用可复用的短动画。"""
+    """触控板像素滚动跟手，鼠标滚轮累积目标并平滑追赶。"""
     from PySide6.QtCore import QObject
     from PySide6.QtQuick import QQuickItem
     from dmshoot.gui.quick_chat_view import ChatView
@@ -297,6 +297,8 @@ def test_quick_wheel_scroll_has_direct_touchpad_and_animated_mouse_paths(qapp, q
     message_list = root.findChild(QQuickItem, "messageList")
     assert message_list is not None
     assert root.findChild(QObject, "chatWheelHandler") is not None
+    assert root.findChild(QObject, "wheelMotionTimer") is not None
+    assert root.property("mouseWheelStep") == 144
     assert message_list.property("maximumFlickVelocity") == 5200
     assert message_list.property("flickDeceleration") == 1200
 
@@ -306,8 +308,11 @@ def test_quick_wheel_scroll_has_direct_touchpad_and_animated_mouse_paths(qapp, q
     assert touchpad_y < at_end
     assert at_end - touchpad_y > 0
 
-    root.scrollByWheel(96, True)
-    qtbot.wait(140)
+    first_target = float(root.property("wheelTargetY"))
+    root.scrollByWheel(144, True)
+    second_target = float(root.property("wheelTargetY"))
+    assert second_target < first_target
+    qtbot.wait(180)
     assert float(message_list.property("contentY")) < touchpad_y
 
 

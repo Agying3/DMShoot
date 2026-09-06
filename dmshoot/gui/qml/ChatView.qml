@@ -18,6 +18,9 @@ Item {
     property int newMessageCount: 0
     property bool bottomStateKnown: false
     property bool lastAtBottom: true
+    // 普通鼠标滚轮一格移动约 144px，接近网页“滚动三行”的体感。
+    property real mouseWheelStep: 144
+    property real wheelTargetY: 0
 
     function isNearBottom() {
         return messageList.atYEnd || messageList.contentY >= messageList.contentHeight - messageList.height - 60
@@ -95,15 +98,22 @@ Item {
     function scrollByWheel(delta, animate) {
         messageList.cancelFlick()
         var maximum = Math.max(0, messageList.contentHeight - messageList.height)
-        var base = wheelAnimation.running ? wheelAnimation.to : messageList.contentY
-        var target = Math.max(0, Math.min(maximum, base - delta))
-        if (animate) {
-            wheelAnimation.to = target
-            wheelAnimation.restart()
-        } else {
-            wheelAnimation.stop()
-            messageList.contentY = target
+        if (Math.abs(delta) < 0.1)
+            return
+
+        if (!animate) {
+            wheelMotionTimer.stop()
+            wheelTargetY = Math.max(0, Math.min(maximum, messageList.contentY - delta))
+            messageList.contentY = wheelTargetY
+            return
         }
+
+        // 连续滚轮输入只更新目标，不重置当前运动。这样快速上滚时
+        // 会持续追赶累计目标，不会出现“一格一刹车”的沉重感。
+        var base = wheelMotionTimer.running ? wheelTargetY : messageList.contentY
+        wheelTargetY = Math.max(0, Math.min(maximum, base - delta))
+        if (!wheelMotionTimer.running)
+            wheelMotionTimer.start()
     }
 
     property string prependAnchor: ""
@@ -180,27 +190,45 @@ Item {
         onMovementEnded: updateBottomState()
     }
 
-    WheelHandler {
+        WheelHandler {
         id: wheelHandler
         objectName: "chatWheelHandler"
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
         target: null
         onWheel: (event) => {
-            var delta = event.pixelDelta.y
-            var animate = !delta
-            if (animate)
-                delta = event.angleDelta.y / 120 * 72
+            // 普通鼠标通常同时带 angleDelta 和 pixelDelta，优先使用
+            // angleDelta，避免高分辨率鼠标被当成几像素的小滚动。
+            var angle = event.angleDelta.y
+            var delta = angle ? angle / 120 * chatRoot.mouseWheelStep : event.pixelDelta.y
+            var animate = Boolean(angle)
             chatRoot.scrollByWheel(delta, animate)
             event.accepted = true
         }
     }
 
-    NumberAnimation {
-        id: wheelAnimation
-        target: messageList
-        property: "contentY"
-        duration: 150
-        easing.type: Easing.OutCubic
+    Timer {
+        id: wheelMotionTimer
+        objectName: "wheelMotionTimer"
+        interval: 16
+        repeat: true
+        onTriggered: {
+            var distance = wheelTargetY - messageList.contentY
+            if (Math.abs(distance) <= 0.6) {
+                messageList.contentY = wheelTargetY
+                stop()
+                return
+            }
+
+            // 追赶式缓动：开始响应快，接近目标时自然收住；
+            // 连续输入时目标继续前移，运动不会被重新起步打断。
+            var step = distance * 0.34
+            var maxStep = 96
+            if (step > maxStep)
+                step = maxStep
+            else if (step < -maxStep)
+                step = -maxStep
+            messageList.contentY += step
+        }
     }
 
     Rectangle {
