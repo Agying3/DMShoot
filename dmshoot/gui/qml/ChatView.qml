@@ -29,6 +29,7 @@ Item {
     // 记录正在等待布局稳定的边界，避免 contentHeight 增长后停在旧边界。
     property int boundaryLock: 0 // 1 = top, -1 = bottom
     property int boundarySettleTicks: 0
+    property bool boundaryAdjusting: false
 
     function isNearBottom() {
         return messageList.atYEnd || messageList.contentY >= messageList.contentHeight - messageList.height - 60
@@ -109,11 +110,15 @@ Item {
     }
 
     function positionAtChatEnd() {
+        if (boundaryAdjusting)
+            return
+        boundaryAdjusting = true
         messageList.forceLayout()
         if (messageList.count > 0)
             messageList.positionViewAtIndex(messageList.count - 1, ListView.End)
         else
             messageList.contentY = 0
+        boundaryAdjusting = false
     }
 
     function settleBoundary(lock) {
@@ -271,7 +276,7 @@ Item {
                 contentY = Math.max(0, Math.min(maximum, contentY))
                 return
             }
-            if (chatRoot.boundaryLock !== 0) {
+            if (chatRoot.boundaryLock !== 0 && !chatRoot.boundaryAdjusting) {
                 var atLockedBoundary = chatRoot.boundaryLock > 0 ? atYBeginning : atYEnd
                 if (!atLockedBoundary) {
                     cancelFlick()
@@ -291,7 +296,7 @@ Item {
         }
         onContentHeightChanged: {
             updateBottomState()
-            if (chatRoot.boundaryLock !== 0) {
+            if (chatRoot.boundaryLock !== 0 && !chatRoot.boundaryAdjusting) {
                 cancelFlick()
                 if (chatRoot.boundaryLock > 0)
                     positionViewAtBeginning()
