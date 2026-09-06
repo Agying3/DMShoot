@@ -18,9 +18,17 @@ Item {
     property int newMessageCount: 0
     property bool bottomStateKnown: false
     property bool lastAtBottom: true
-    // 普通鼠标滚轮一格移动约 144px，接近网页“滚动三行”的体感。
-    property real mouseWheelStep: 144
-    property real wheelTargetY: 0
+    // 滚轮只负责把输入交给 ListView 的原生 Flickable 物理。
+    property real mouseWheelStep: 96
+    property real wheelSensitivity: 10.0
+    property real wheelMaxVelocity: 8000
+    property real wheelImmediateFactor: 0.55
+    property int wheelBurstLevel: 0
+    property int wheelDirection: 0
+    property real lastWheelTime: 0
+    // 记录正在等待布局稳定的边界，避免 contentHeight 增长后停在旧边界。
+    property int boundaryLock: 0 // 1 = top, -1 = bottom
+    property int boundarySettleTicks: 0
 
     function isNearBottom() {
         return messageList.atYEnd || messageList.contentY >= messageList.contentHeight - messageList.height - 60
@@ -60,10 +68,10 @@ Item {
             // 模型刚重置时 delegate 还没有完成文本测量；等待两轮事件循环，
             // 才能根据最终 contentHeight 定位到最后一条，避免首帧大片空白。
             messageList.forceLayout()
-            messageList.positionViewAtEnd()
+            positionAtChatEnd()
             Qt.callLater(function() {
                 messageList.forceLayout()
-                messageList.positionViewAtEnd()
+                positionAtChatEnd()
                 suppressHistory = false
                 updateBottomState(true)
             })
@@ -80,7 +88,7 @@ Item {
     function notifyAppended(follow) {
         if (follow) {
             Qt.callLater(function() {
-                messageList.positionViewAtEnd()
+                positionAtChatEnd()
                 newMessageCount = 0
                 updateBottomState()
             })
@@ -91,29 +99,93 @@ Item {
 
     function jumpToLatest() {
         newMessageCount = 0
-        messageList.positionViewAtEnd()
+        positionAtChatEnd()
         updateBottomState(true)
     }
 
-    function scrollByWheel(delta, animate) {
-        messageList.cancelFlick()
+    function clampContentY(value) {
         var maximum = Math.max(0, messageList.contentHeight - messageList.height)
+        return Math.max(0, Math.min(maximum, value))
+    }
+
+    function positionAtChatEnd() {
+        messageList.forceLayout()
+        if (messageList.count > 0)
+            messageList.positionViewAtIndex(messageList.count - 1, ListView.End)
+        else
+            messageList.contentY = 0
+    }
+
+    function settleBoundary(lock) {
+        boundaryLock = lock
+        boundarySettleTicks = 0
+        boundarySettleTimer.start()
+        messageList.cancelFlick()
+        if (lock > 0)
+            messageList.positionViewAtBeginning()
+        else
+            positionAtChatEnd()
+    }
+
+    function scrollByWheel(delta, animate) {
         if (Math.abs(delta) < 0.1)
             return
 
         if (!animate) {
-            wheelMotionTimer.stop()
-            wheelTargetY = Math.max(0, Math.min(maximum, messageList.contentY - delta))
-            messageList.contentY = wheelTargetY
+            wheelBurstLevel = 0
+            wheelDirection = 0
+            lastWheelTime = 0
+            boundaryLock = 0
+            boundarySettleTimer.stop()
+            messageList.cancelFlick()
+            var directY = clampContentY(messageList.contentY - delta)
+            messageList.contentY = directY
+            var directMaximum = Math.max(0, messageList.contentHeight - messageList.height)
+            if (directY <= 0 && delta > 0)
+                settleBoundary(1)
+            else if (directY >= directMaximum && delta < 0)
+                settleBoundary(-1)
             return
         }
 
-        // 连续滚轮输入只更新目标，不重置当前运动。这样快速上滚时
-        // 会持续追赶累计目标，不会出现“一格一刹车”的沉重感。
-        var base = wheelMotionTimer.running ? wheelTargetY : messageList.contentY
-        wheelTargetY = Math.max(0, Math.min(maximum, base - delta))
-        if (!wheelMotionTimer.running)
-            wheelMotionTimer.start()
+        var now = Date.now()
+        var direction = delta > 0 ? 1 : -1
+        if (wheelDirection === direction && now - lastWheelTime < 220) {
+            wheelBurstLevel = Math.min(8, wheelBurstLevel + 1)
+        } else {
+            wheelBurstLevel = 1
+        }
+        wheelDirection = direction
+        lastWheelTime = now
+
+        // 第一帧立即移动，消除“滚了但页面还不动”的迟滞。
+        var immediate = delta * wheelImmediateFactor
+        var nextY = clampContentY(messageList.contentY - immediate)
+        boundaryLock = 0
+        boundarySettleTimer.stop()
+        messageList.contentY = nextY
+
+        // 当前速度由 Flickable 自己维护。连续同向输入叠加原生速度，
+        // 反向输入先取消旧 flick，避免边界附近或反向时出现回弹。
+        var burstMultiplier = 1.0 + Math.min(7, wheelBurstLevel - 1) * 0.28
+        var impulse = delta * wheelSensitivity * burstMultiplier
+        // Qt 的 verticalVelocity 表示内容本身的运动方向，
+        // flick() 参数表示视图滚动方向，二者符号相反。
+        var currentVelocity = -messageList.verticalVelocity
+        if (currentVelocity * impulse < 0) {
+            messageList.cancelFlick()
+            currentVelocity = 0
+        }
+        var velocity = Math.max(
+            -wheelMaxVelocity,
+            Math.min(wheelMaxVelocity, currentVelocity + impulse)
+        )
+        var maximum = Math.max(0, messageList.contentHeight - messageList.height)
+        if ((nextY <= 0 && velocity > 0) || (nextY >= maximum && velocity < 0)) {
+            settleBoundary(nextY <= 0 ? 1 : -1)
+            return
+        }
+        messageList.flick(0, velocity)
     }
 
     property string prependAnchor: ""
@@ -158,8 +230,8 @@ Item {
         displayMarginBeginning: 0
         displayMarginEnd: 0
         pixelAligned: false
-        maximumFlickVelocity: 5200
-        flickDeceleration: 1200
+        maximumFlickVelocity: 8000
+        flickDeceleration: 1800
         boundsBehavior: Flickable.StopAtBounds
         boundsMovement: Flickable.StopAtBounds
         delegate: Loader {
@@ -179,6 +251,24 @@ Item {
         }
 
         onContentYChanged: {
+            // 即使来自内部 Flickable/拖动路径，也不允许越过边界。
+            var maximum = Math.max(0, contentHeight - height)
+            if (contentY < 0 || contentY > maximum) {
+                cancelFlick()
+                contentY = Math.max(0, Math.min(maximum, contentY))
+                return
+            }
+            if (chatRoot.boundaryLock !== 0) {
+                var atLockedBoundary = chatRoot.boundaryLock > 0 ? atYBeginning : atYEnd
+                if (!atLockedBoundary) {
+                    cancelFlick()
+                    if (chatRoot.boundaryLock > 0)
+                        positionViewAtBeginning()
+                    else
+                        positionViewAtEnd()
+                    return
+                }
+            }
             updateBottomState()
             if (!chatRoot.suppressHistory && chatRoot.historyAvailable && !chatRoot.historyPending
                     && contentY <= 20 && contentHeight > height + 20) {
@@ -186,11 +276,43 @@ Item {
                 chatRoot.historyRequested()
             }
         }
-        onContentHeightChanged: updateBottomState()
+        onContentHeightChanged: {
+            updateBottomState()
+            if (chatRoot.boundaryLock !== 0) {
+                cancelFlick()
+                if (chatRoot.boundaryLock > 0)
+                    positionViewAtBeginning()
+                else
+                    positionViewAtEnd()
+            }
+        }
         onMovementEnded: updateBottomState()
     }
 
-        WheelHandler {
+    // 只处理 delegate 异步测量造成的边界变化，不驱动普通滚动。
+    Timer {
+        id: boundarySettleTimer
+        objectName: "boundarySettleTimer"
+        interval: 16
+        repeat: true
+        onTriggered: {
+            if (chatRoot.boundaryLock === 0) {
+                stop()
+                return
+            }
+            messageList.forceLayout()
+            messageList.cancelFlick()
+            if (chatRoot.boundaryLock > 0)
+                messageList.positionViewAtBeginning()
+            else
+                positionAtChatEnd()
+            boundarySettleTicks += 1
+            if (boundarySettleTicks >= 32)
+                stop()
+        }
+    }
+
+    WheelHandler {
         id: wheelHandler
         objectName: "chatWheelHandler"
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
@@ -203,31 +325,6 @@ Item {
             var animate = Boolean(angle)
             chatRoot.scrollByWheel(delta, animate)
             event.accepted = true
-        }
-    }
-
-    Timer {
-        id: wheelMotionTimer
-        objectName: "wheelMotionTimer"
-        interval: 16
-        repeat: true
-        onTriggered: {
-            var distance = wheelTargetY - messageList.contentY
-            if (Math.abs(distance) <= 0.6) {
-                messageList.contentY = wheelTargetY
-                stop()
-                return
-            }
-
-            // 追赶式缓动：开始响应快，接近目标时自然收住；
-            // 连续输入时目标继续前移，运动不会被重新起步打断。
-            var step = distance * 0.34
-            var maxStep = 96
-            if (step > maxStep)
-                step = maxStep
-            else if (step < -maxStep)
-                step = -maxStep
-            messageList.contentY += step
         }
     }
 
@@ -502,5 +599,4 @@ Item {
             }
         }
     }
-
 }

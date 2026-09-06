@@ -280,7 +280,7 @@ def test_quick_scroll_only_notifies_when_bottom_state_changes(qapp, qtbot, monke
 
 @pytest.mark.gui
 def test_quick_wheel_scroll_has_direct_touchpad_and_animated_mouse_paths(qapp, qtbot, monkeypatch):
-    """触控板像素滚动跟手，鼠标滚轮累积目标并平滑追赶。"""
+    """滚轮复用 Flickable 原生拖动惯性，第一下立即响应且边界不回弹。"""
     from PySide6.QtCore import QObject
     from PySide6.QtQuick import QQuickItem
     from dmshoot.gui.quick_chat_view import ChatView
@@ -297,10 +297,13 @@ def test_quick_wheel_scroll_has_direct_touchpad_and_animated_mouse_paths(qapp, q
     message_list = root.findChild(QQuickItem, "messageList")
     assert message_list is not None
     assert root.findChild(QObject, "chatWheelHandler") is not None
-    assert root.findChild(QObject, "wheelMotionTimer") is not None
-    assert root.property("mouseWheelStep") == 144
-    assert message_list.property("maximumFlickVelocity") == 5200
-    assert message_list.property("flickDeceleration") == 1200
+    assert root.findChild(QObject, "wheelMotionTimer") is None
+    assert root.findChild(QObject, "wheelBurstResetTimer") is None
+    assert root.property("mouseWheelStep") == 96
+    assert root.property("wheelSensitivity") == 10
+    assert message_list.property("interactive") is True
+    assert message_list.property("maximumFlickVelocity") == 8000
+    assert message_list.property("flickDeceleration") == 1800
 
     at_end = float(message_list.property("contentY"))
     root.scrollByWheel(96, False)
@@ -308,12 +311,76 @@ def test_quick_wheel_scroll_has_direct_touchpad_and_animated_mouse_paths(qapp, q
     assert touchpad_y < at_end
     assert at_end - touchpad_y > 0
 
-    first_target = float(root.property("wheelTargetY"))
-    root.scrollByWheel(144, True)
-    second_target = float(root.property("wheelTargetY"))
-    assert second_target < first_target
+    before_flick = float(message_list.property("contentY"))
+    root.scrollByWheel(96, True)
+    qtbot.wait(24)
+    first_velocity = float(message_list.property("verticalVelocity"))
+    assert float(message_list.property("contentY")) < before_flick
+    assert first_velocity < 0
+    first_burst = int(root.property("wheelBurstLevel"))
+    root.scrollByWheel(96, True)
+    assert int(root.property("wheelBurstLevel")) == first_burst + 1
+    qtbot.wait(24)
+    second_velocity = float(message_list.property("verticalVelocity"))
+    assert second_velocity <= first_velocity or abs(second_velocity) <= 0.5
     qtbot.wait(180)
     assert float(message_list.property("contentY")) < touchpad_y
+    before_reverse = float(message_list.property("contentY"))
+    root.scrollByWheel(-96, True)
+    assert int(root.property("wheelBurstLevel")) == 1
+    qtbot.wait(24)
+    assert float(message_list.property("contentY")) > before_reverse
+
+
+@pytest.mark.gui
+def test_quick_wheel_stops_at_bottom_without_rebound(qapp, qtbot, monkeypatch):
+    """继续向底部滚动时直接停住，不能出现回弹。"""
+    from PySide6.QtQuick import QQuickItem
+    from dmshoot.gui.quick_chat_view import ChatView
+
+    monkeypatch.setenv("DMSHOOT_CHAT_RENDERER", "quick")
+    view = ChatView()
+    qtbot.addWidget(view)
+    view.resize(760, 520)
+    view.show()
+    view.load_messages("Alice", _messages(500))
+    qtbot.wait(300)
+
+    root = view._root
+    message_list = root.findChild(QQuickItem, "messageList")
+    root.positionAtChatEnd()
+    qtbot.wait(40)
+    settled_bottom = float(message_list.property("contentY"))
+    root.scrollByWheel(-5000, True)
+    qtbot.wait(160)
+
+    assert abs(float(message_list.property("contentY")) - settled_bottom) <= 0.5
+    assert abs(float(message_list.property("verticalVelocity"))) <= 0.5
+
+
+@pytest.mark.gui
+def test_quick_wheel_stops_at_top_without_rebound(qapp, qtbot, monkeypatch):
+    """继续向顶部滚动时直接停住，布局变化后也不能偏离顶部。"""
+    from PySide6.QtQuick import QQuickItem
+    from dmshoot.gui.quick_chat_view import ChatView
+
+    monkeypatch.setenv("DMSHOOT_CHAT_RENDERER", "quick")
+    view = ChatView()
+    qtbot.addWidget(view)
+    view.resize(760, 520)
+    view.show()
+    view.load_messages("Alice", _messages(500))
+    qtbot.wait(300)
+
+    root = view._root
+    message_list = root.findChild(QQuickItem, "messageList")
+    message_list.setProperty("contentY", 0)
+    qtbot.wait(40)
+    root.scrollByWheel(5000, True)
+    qtbot.wait(160)
+
+    assert abs(float(message_list.property("contentY"))) <= 0.5
+    assert abs(float(message_list.property("verticalVelocity"))) <= 0.5
 
 
 @pytest.mark.gui
