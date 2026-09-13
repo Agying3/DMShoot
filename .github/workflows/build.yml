@@ -1,0 +1,79 @@
+# DMShoot 打包工 —— 把 157MB 的 PyInstaller 打包甩给 GitHub 免费 Windows runner
+# 触发：手动按钮(workflow_dispatch) 或 打 tag(v*) 自动跑
+# 算力：公开仓 windows-latest 完全免费，不吃你本机 RAM / C 盘
+#
+# 【关于 DMShoot.spec 里的 node.exe】
+#   spec 按顺序找 node.exe：
+#     1) C:\Users\Administrator\.workbuddy\binaries\node\versions\*\node.exe   <- 你本机路径
+#     2) C:\Program Files\nodejs\node.exe                                      <- fallback
+#   两个都找不到时 binaries = []，不会崩，但打出来的 EXE 不含 node -> 抖音签名缺依赖。
+#   所以下面那一步把 node 铺到 Program Files\nodejs，保证 spec 命中。
+name: build-exe
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write          # 打 tag 时发 Release 需要
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 让 spec 能命中 node.exe
+        shell: pwsh
+        run: |
+          $target = "C:\Program Files\nodejs\node.exe"
+          if (-not (Test-Path $target)) {
+            New-Item -ItemType Directory -Force -Path "C:\Program Files\nodejs" | Out-Null
+            Copy-Item (Get-Command node).Source $target -Force
+          }
+          Write-Host "node ready -> $target"
+          & $target -v
+
+      - name: 安装 Python 依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: 准备抖音签名 SDK（node_modules 会一起打进包）
+        shell: bash
+        run: |
+          cd external/DouYin_Spider && npm install
+        continue-on-error: true
+
+      - name: PyInstaller 打包（单文件 EXE）
+        run: pyinstaller DMShoot.spec --noconfirm
+
+      - name: 确认产物
+        shell: pwsh
+        run: |
+          Get-Item dist/DMShoot.exe | Select-Object Name, @{n="SizeMB";e={[math]::Round($_.Length/1MB,1)}}
+
+      - name: 上传 EXE（artifact）
+        uses: actions/upload-artifact@v4
+        with:
+          name: DMShoot-exe
+          path: dist/DMShoot.exe
+          retention-days: 14
+
+      - name: 打 tag 时发布 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/DMShoot.exe
