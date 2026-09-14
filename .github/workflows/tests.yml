@@ -10,13 +10,26 @@
 #     -> 然后被 continue-on-error 吞掉，变成假绿
 #
 # 【本版修正】
-#  - Linux 上装 Qt 运行库（libegl1 等），从根上补掉 libEGL.so.1
-#  - 用 -p no:pytestqt 直接绕开那个崩溃点（CI 不跑 GUI 测试，不需要 qtbot）
 #  - 去掉所有 continue-on-error，让失败真的变红
+#  - Linux 上补 Qt 运行库（libegl1 等），先堵掉 libEGL.so.1 那一层
+#  - 用 -p no:pytestqt 少加载 pytest-qt 插件（CI 不跑 GUI 测试，不需要 qtbot）
 #  - 只跑 tests/ 目录（pytest.ini 的 testpaths，即不依赖 GUI 的那套）
 #    根目录那 15 个 test_*.py 里有大量 GUI / 需要抖音 cookie / 需要真连的，
 #    在无显示器无网络的 CI 里本来就不该跑
 #  - 无论成败都产出 junit + html 报告
+#
+# 【修 libEGL 之后仍然全红，真因是第二层：没有 display】
+#  -p no:pytestqt 只禁用 pytest-qt *插件*，挡不住 tests/conftest.py 里自己定义的
+#  会话级 qapp fixture —— 它内部照样 QApplication(sys.argv)，Linux 上直接
+#  Fatal Python error: Aborted / exit 134 / core dumped。
+#  -m "not gui" 也拦不住：用了 qapp 的测试（test_app_icon.py 里两个）根本没打 gui marker。
+#  -> 真正的解法是 QT_QPA_PLATFORM=offscreen（见 job 级 env）。
+#  -> libegl1/libgl1 那步解决的是"缺 .so 文件"，是另一码事，保留但别指望它治这个。
+#
+# 【Windows py3.11 唯一失败项与 CI 无关】
+#  dmshoot/ai/backend.py 里 strftime('%Y年%m月%d日 %H:%M') 在 Windows 下会把中文
+#  字面量交给 ANSI locale 编码 -> UnicodeEncodeError。属于生产代码 bug，
+#  已改为 f-string 拼接（不经过 locale）。
 name: tests
 
 on:
@@ -30,6 +43,12 @@ jobs:
   test:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    # CI runner 没有真实显示器。conftest.py 里的会话级 qapp fixture 会直接
+    # QApplication(sys.argv)，Linux 上拿不到 display 就 SIGABRT（exit 134，core dumped），
+    # 属于进程级崩溃 —— 不是"某个测试失败"，是整个 pytest 当场死掉，后面全不跑。
+    # offscreen 平台插件不需要 X11，是 CI 里跑 Qt 的标准做法。
+    env:
+      QT_QPA_PLATFORM: offscreen
     strategy:
       fail-fast: false
       matrix:
@@ -59,7 +78,8 @@ jobs:
         run: mkdir -p reports
 
       - name: 跑测试（不再吞错）
-        # -p no:pytestqt 是关键：绕开 pytest-qt 在无显示器环境下的崩溃
+        # offscreen 平台已由 job 级 env 注入；-p no:pytestqt 只是顺手少加载一个插件，
+        # 别把它当成"绕开崩溃"的手段（它挡不住 conftest 里的 qapp）。
         run: pytest tests/ -m "not gui" -p no:pytestqt --junitxml=reports/junit.xml
 
       - name: 上传测试报告

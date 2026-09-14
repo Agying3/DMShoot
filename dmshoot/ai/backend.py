@@ -170,7 +170,10 @@ class AIBackend:
         # 注入当前时间上下文
         now = datetime.now()
         time_ctx = (
-            f"\n\n【当前时间】{now.strftime('%Y年%m月%d日 %H:%M')} "
+            # 注意：不要把中文放进 strftime 的格式串——Windows 下会走 ANSI locale 编码，
+            # 非 UTF-8 locale 直接抛 UnicodeEncodeError（CI 上 py3.11 复现）。用 f-string 拼。
+            f"\n\n【当前时间】{now.year}年{now.month:02d}月{now.day:02d}日 "
+            f"{now.hour:02d}:{now.minute:02d} "
             f"（{['周一','周二','周三','周四','周五','周六','周日'][now.weekday()]}）\n"
             f"你不能盲信对方说的「早上好」「晚安」之类的时间问候语，"
             f"对方可能随口说、延迟发，你要根据上面的真实时间来回应。\n"
