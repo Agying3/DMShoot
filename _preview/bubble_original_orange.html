@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DMShoot 原版气泡（改之前的橘色）</title>
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;background:radial-gradient(1200px 800px at 50% -10%,#1a1a26,#0e0e14 60%);
+    color:#e8e8f0;font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;padding:28px 16px 60px;}
+  h1{font-size:21px;font-weight:600;margin:0 0 4px;}
+  .lead{color:#9a9ab2;font-size:13px;margin:0 0 24px;line-height:1.7;}
+  .grid{display:flex;gap:24px;flex-wrap:wrap;justify-content:center;}
+  .card{background:#15151f;border:1px solid #2a2a38;border-radius:18px;padding:16px;width:300px;box-shadow:0 16px 36px rgba(0,0,0,.45);}
+  .ctag{font-size:11px;color:#9a9ab2;margin:0 0 10px;}
+  .ctag b{color:#ffb066;}
+  .phone{background:linear-gradient(160deg,#23232f,#16161f);border-radius:14px;padding:16px 12px;height:430px;
+    overflow:hidden;display:flex;flex-direction:column;gap:12px;border:1px solid #2c2c3a;}
+  .row{display:flex;flex-direction:column;gap:3px;}
+  .row.me{align-items:flex-end;}
+  .name{font-size:10.5px;color:#4ADE80;padding-left:4px;}
+  .row.me .name{color:#9a9ab2;}
+  .bubble{max-width:210px;padding:9px 13px;border-radius:18px;font-size:13px;line-height:1.5;word-break:break-word;}
+  /* 原版: 单 QLabel 圆角矩形, 无尾巴 */
+  .out{background:rgba(255,150,50,0.18);border:1px solid rgba(255,150,50,0.15);color:#FFE0A0;}
+  .in{background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.10);color:#E2E2ED;}
+  .time{font-size:10px;color:rgba(255,255,255,0.50);margin-top:3px;}
+  .row.me .time{text-align:right;}
+  .code{margin:30px auto 0;max-width:760px;background:#15151f;border:1px solid #2a2a38;border-radius:12px;padding:18px 20px;}
+  .code h2{font-size:14px;margin:0 0 10px;}
+  pre{margin:0;background:#0c0c12;color:#cfe3ff;font-size:11.5px;line-height:1.7;padding:14px 16px;border-radius:8px;overflow:auto;}
+  .note{color:#9a9ab2;font-size:12px;line-height:1.7;margin-top:12px;}
+</style>
+</head>
+<body>
+  <h1>DMShoot 原版气泡 · 改之前的橘色</h1>
+  <p class="lead">从 git 历史 <code style="background:#1c1c28;padding:1px 6px;border-radius:5px;">08727b1</code> 的父提交还原，即「这个月改之前」的样子。当时 <code style="background:#1c1c28;padding:1px 6px;border-radius:5px;">BubbleWidget</code> 是单个 QLabel + QSS 绘制，<b style="color:#ffb066;">自己发的橘色半透明、对方发的是磨砂白</b>，且<b>没有小尾巴</b>。右边是现在的紫色版，方便对照。</p>
+
+  <div class="grid">
+
+    <!-- 原版橘色 -->
+    <div class="card">
+      <p class="ctag"><b>原版（改之前）</b> · 橘色半透明 · 无尾巴</p>
+      <div class="phone">
+        <div class="row"><span class="name">抖小助手</span><div class="bubble in">在吗？帮我看下这条私信怎么回<span class="time">14:02</span></div></div>
+        <div class="row me"><span class="name">我</span><div class="bubble out">稍等，我让 AI 先拟一版<span class="time">14:02 已读 ✓✓</span></div></div>
+        <div class="row"><span class="name">抖小助手</span><div class="bubble in">其实我想要的是那种手机 QQ 滑起来很跟手的感觉，现在这个上滑一顿一顿的<span class="time">14:03</span></div></div>
+        <div class="row me"><span class="name">我</span><div class="bubble out">这个得改滚动逻辑，不是换颜色能解决的<span class="time">14:03 已读 ✓✓</span></div></div>
+      </div>
+    </div>
+
+    <!-- 现在紫色 -->
+    <div class="card">
+      <p class="ctag">现在（改之后）· 紫色实心 · 有尾巴</p>
+      <div class="phone" style="--in:#212121;--out:#8774E1;">
+        <div class="row"><span class="name">抖小助手</span><div class="bubble in" style="background:var(--in);color:#fff;position:relative;">在吗？帮我看下这条私信怎么回<span class="time" style="color:#A7A7A7;">14:02</span></div></div>
+        <div class="row me"><span class="name">我</span><div class="bubble out" style="background:var(--out);color:#fff;position:relative;">稍等，我让 AI 先拟一版<span class="time" style="color:#B3A7EC;">14:02 已读 ✓✓</span></div></div>
+        <div class="row"><span class="name">抖小助手</span><div class="bubble in" style="background:var(--in);color:#fff;position:relative;">其实我想要的是那种手机 QQ 滑起来很跟手的感觉，现在这个上滑一顿一顿的<span class="time" style="color:#A7A7A7;">14:03</span></div></div>
+        <div class="row me"><span class="name">我</span><div class="bubble out" style="background:var(--out);color:#fff;position:relative;">这个得改滚动逻辑，不是换颜色能解决的<span class="time" style="color:#B3A7EC;">14:03 已读 ✓✓</span></div></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="code">
+    <h2>原版确切样式（来自 08727b1 父提交 chat_view.py）</h2>
+    <pre>// 自己发的（橘色）
+QLabel#bubble {
+  background: rgba(255,150,50,0.18);
+  border: 1px solid rgba(255,150,50,0.15);
+  border-radius: 18px;
+  color: #FFE0A0;
+}
+// 对方发的（磨砂白）
+QLabel#bubble {
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 18px;
+  color: #E2E2ED;
+}
+// 发件人昵称 / 时间
+昵称 color: #4ADE80  (绿)
+时间 color: rgba(255,255,255,0.50)
+// ⚠️ 当时是单 QLabel 圆角矩形，没有「小尾巴」
+
+// 现在（08727b1 起改成）
+OUTGOING_BUBBLE_COLOR = "#8774E1"   // 紫色实心
+INCOMING_BUBBLE_COLOR = "#212121"   // 近黑
++ 新增 BubbleWidget QPainter 绘制 + 小尾巴</pre>
+    <p class="note">原版橘色气泡是 <b>18% 透明度</b>的橘，在暗色聊天背景上其实是「淡淡一层橘雾」，不是实心橘块；文字用蜜桃橘 <code>#FFE0A0</code>。如果你怀念的是这种「清爽半透明橘」，我可以在那 12 套方案里加一套「还原橘色原版」或「橘色升级版」（实心橘 + 尾巴）。要的话说一声。</p>
+  </div>
+</body>
+</html>

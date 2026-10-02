@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://perf_page"]
+
+[ext_resource type="Script" path="res://scripts/perf/perf_page.gd" id="1_pf"]
+
+[node name="PerfPage" type="Control"]
+script = ExtResource("1_pf")

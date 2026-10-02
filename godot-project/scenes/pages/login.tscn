@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://login_page"]
+
+[ext_resource type="Script" path="res://scripts/login/login_page.gd" id="1_login"]
+
+[node name="LoginPage" type="Control"]
+script = ExtResource("1_login")

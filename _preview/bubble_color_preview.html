@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DMShoot 气泡配色预览</title>
+<style>
+  :root{
+    --bg:#0e0e14;
+    --panel:#15151f;
+    --panel2:#1c1c28;
+    --txt:#e8e8f0;
+    --sub:#9a9ab2;
+    --line:#2a2a38;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;background:radial-gradient(1200px 800px at 50% -10%,#1a1a26,#0e0e14 60%);
+    color:var(--txt);font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif;
+    padding:28px 18px 60px;
+  }
+  h1{font-size:22px;font-weight:600;margin:0 0 4px;letter-spacing:.5px;}
+  .lead{color:var(--sub);font-size:13px;margin:0 0 24px;line-height:1.6;}
+  .grid{display:flex;gap:20px;flex-wrap:wrap;justify-content:center;}
+  .card{
+    background:var(--panel);border:1px solid var(--line);border-radius:18px;
+    padding:16px;width:300px;box-shadow:0 18px 40px rgba(0,0,0,.45);
+  }
+  .card.reco{border-color:#7b6cf0;box-shadow:0 0 0 2px rgba(123,108,240,.35),0 18px 40px rgba(0,0,0,.45);}
+  .tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;background:#7b6cf0;color:#fff;margin-left:6px;vertical-align:middle;}
+  .cname{font-size:15px;font-weight:600;margin:0 0 2px;}
+  .cdesc{font-size:11.5px;color:var(--sub);margin:0 0 12px;line-height:1.5;min-height:32px;}
+  .phone{
+    background:linear-gradient(160deg,#23232f,#16161f);
+    border-radius:14px;padding:14px 12px;height:430px;overflow:hidden;
+    display:flex;flex-direction:column;gap:10px;border:1px solid #2c2c3a;
+  }
+  .row{display:flex;align-items:flex-end;gap:8px;}
+  .row.me{flex-direction:row-reverse;}
+  .avatar{width:30px;height:30px;border-radius:50%;flex:0 0 30px;display:flex;align-items:center;justify-content:center;font-size:12px;color:#fff;font-weight:600;}
+  .av-peer{background:linear-gradient(135deg,#5b6cff,#8a5bff);}
+  .av-me{background:linear-gradient(135deg,#ff8a5b,#ff5b9c);}
+  .bubble{
+    max-width:200px;padding:8px 11px;border-radius:14px;font-size:13px;line-height:1.5;
+    position:relative;word-break:break-word;
+  }
+  .bubble .meta{display:block;font-size:10px;margin-top:3px;opacity:.75;text-align:right;}
+  /* tails */
+  .in{border-bottom-left-radius:4px;}
+  .in::after{content:"";position:absolute;left:-5px;bottom:0;width:8px;height:12px;
+    background:var(--in);border-bottom-right-radius:9px;}
+  .me .out{border-bottom-right-radius:4px;}
+  .me .out::after{content:"";position:absolute;right:-5px;bottom:0;width:8px;height:12px;
+    background:var(--out-raw,var(--out));border-bottom-left-radius:9px;}
+  .swatches{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px;}
+  .sw{width:100%;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--sub);}
+  .sw i{width:22px;height:22px;border-radius:6px;flex:0 0 22px;border:1px solid rgba(255,255,255,.12);}
+  .sw code{color:var(--txt);font-size:10.5px;}
+  .legend{margin:34px auto 0;max-width:980px;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;}
+  .legend h2{font-size:15px;margin:0 0 12px;}
+  table{width:100%;border-collapse:collapse;font-size:12px;}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);}
+  th{color:var(--sub);font-weight:500;}
+  td code{background:var(--panel2);padding:1px 6px;border-radius:5px;font-size:11px;}
+  .note{font-size:12px;color:var(--sub);line-height:1.7;margin-top:14px;}
+  .note b{color:#ffce85;}
+  .grad{background:var(--out);}
+</style>
+</head>
+<body>
+  <h1>DMShoot 气泡配色预览 <span style="font-size:13px;color:var(--sub);font-weight:400;">（4 套方案 · 直接挑一套给 Codex 应用）</span></h1>
+  <p class="lead">当前配色问题：收件气泡 <code style="background:#1c1c28;padding:1px 6px;border-radius:5px;">#212121</code> 在深色壁纸上几乎「黑块一块」、与背景糊在一起；发件紫 <code style="background:#1c1c28;padding:1px 6px;border-radius:5px;">#8774E1</code> 偏平、无层次。<br>下方 4 个手机框是同一段对话在 4 套配色下的真实观感，取色表给 Codex 用。</p>
+
+  <div class="grid">
+
+    <!-- 方案1 雅紫 recommended -->
+    <div class="card reco">
+      <div class="cname">① 雅紫（推荐）<span class="tag">首选</span></div>
+      <div class="cdesc">保留现有紫品牌，收件气泡提亮成「真·表面色」告别黑块，发件加微渐变出层次。最稳、改动最小。</div>
+      <div class="phone" style="--in:#313042;--out:#7b6cf0;--out-raw:#7b6cf0;">
+        <div class="row"><div class="avatar av-peer">抖</div><div class="bubble in" style="background:var(--in);color:#ECECF2;">在吗？帮我看下这条私信怎么回<span class="meta" style="color:#9A9AB2;">14:02</span></div></div>
+        <div class="row me"><div class="avatar av-me">我</div><div class="bubble out grad" style="color:#fff;">稍等，我让 AI 先拟一版<span class="meta" style="color:#D9D2FF;">已读 ✓✓</span></div></div>
+        <div class="row"><div class="avatar av-peer">抖</div><div class="bubble in" style="background:var(--in);color:#ECECF2;">其实我想要的是那种手机 QQ 滑起来很跟手的感觉，现在这个上滑一顿一顿的<span class="meta" style="color:#9A9AB2;">14:03</span></div></div>
+        <div class="row me"><div class="avatar av-me">我</div><div class="bubble out grad" style="color:#fff;">这个得改滚动逻辑，不是换颜色能解决的<span class="meta" style="color:#D9D2FF;">已读 ✓✓</span></div></div>
+      </div>
+      <div class="swatches">
+        <div class="sw"><i style="background:#313042;"></i>收件底 <code>#313042</code></div>
+        <div class="sw"><i class="grad" style="background:linear-gradient(135deg,#7B6CF0,#9C8CFF);"></i>发件底 <code>#7B6CF0→#9C8CFF</code></div>
+        <div class="sw"><i style="background:#ECECF2;"></i>收件字 <code>#ECECF2</code></div>
+        <div class="sw"><i style="background:#9A9AB2;"></i>收件时间 <code>#9A9AB2</code></div>
+        <div class="sw"><i style="background:#D9D2FF;"></i>发件时间 <code>#D9D2FF</code></div>
+      </div>
+    </div>
+
+    <!-- 方案2 深海蓝 -->
+    <div class="card">
+      <div class="cname">② 深海蓝</div>
+      <div class="cdesc">Telegram 暗色风格。发件用沉稳的蓝、收件用极深蓝灰，对比干净、长时间看不累。</div>
+      <div class="phone" style="--in:#1B2733;--out:#2B5278;--out-raw:#2B5278;">
+        <div class="row"><div class="avatar av-peer">抖</div><div class="bubble in" style="background:var(--in);color:#E6EDF3;">在吗？帮我看下这条私信怎么回<span class="meta" style="color:#7E93A6;">14:02</span></div></div>
+        <div class="row me"><div class="avatar av-me">我</div><div class="bubble out" style="background:var(--out);color:#fff;">稍等，我让 AI 先拟一版<span class="meta" style="color:#BBD3E8;">已读 ✓✓</span></div></div>
+        <div class="row"><div class="avatar av-peer">抖</div><div class="bubble in" style="background:var(--in);color:#E6EDF3;">其实我想要的是那种手机 QQ 滑起来很跟手的感觉，现在这个上滑一顿一顿的<span class="meta" style="color:#7E93A6;">14:03</span></div></div>
+        <div class="row me"><div class="avatar av-me">我</div><div class="bubble out" style="background:var(--out);color:#fff;">这个得改滚动逻辑，不是换颜色能解决的<span class="meta" style="color:#BBD3E8;">已读 ✓✓</span></div></div>
+      </div>
+      <div class="swatches">
+        <div class="sw"><i style="background:#1B2733;"></i>收件底 <code>#1B2733</code></div>
+        <div class="sw"><i style="background:#2B5278;"></i>发件底 <code>#2B5278</code></div>
+        <div class="sw"><i style="background:#E6EDF3;"></i>收件字 <code>#E6EDF3</code></div>
+        <div class="sw"><i style="background:#7E93A6;"></i>收件时间 <code>#7E93A6</code></div>
+        <div class="sw"><i style="background:#BBD3E8;"></i>发件时间 <code>#BBD3E8</code></div>
+      </div>
+    </div>
+
+    <!-- 方案3 薄荷绿 -->
+    <div class="card">
+      <div class="cname">③ 薄荷绿</div>
+      <div class="cdesc">微信式清爽绿调。发件渐变绿更有「已发送/活力」感，适合偏年轻活泼的直播私信场景。</div>
+      <div class="phone" style="--in:#2A2E33;--out:#16A06A;--out-raw:#16A06A;">
+        <div class="row"><div class="avatar av-peer">抖</div><div class="bubble in" style="background:var(--in);color:#ECEEF0;">在吗？帮我看下这条私信怎么回<span class="meta" style="color:#8FA0A0;">14:02</span></div></div>
+        <div class="row me"><div class="avatar av-me">我</div><div class="bubble out grad" style="color:#fff;">稍等，我让 AI 先拟一版<span class="meta" style="color:#C7F2DC;">已读 ✓✓</span></div></div>
+        <div class="row"><div class="avatar av-peer">抖</div><div class="bubble in" style="background:var(--in);color:#ECEEF0;">其实我想要的是那种手机 QQ 滑起来很跟手的感觉，现在这个上滑一顿一顿的<span class="meta" style="color:#8FA0A0;">14:03</span></div></div>
+        <div class="row me"><div class="avatar av-me">我</div><div class="bubble out grad" style="color:#fff;">这个得改滚动逻辑，不是换颜色能解决的<span class="meta" style="color:#C7F2DC;">已读 ✓✓</span></div></div>
+      </div>
+      <div class="swatches">
+        <div class="sw"><i style="background:#2A2E33;"></i>收件底 <code>#2A2E33</code></div>
+        <div class="sw"><i class="grad" style="background:linear-gradient(135deg,#16A06A,#2BD07F);"></i>发件底 <code>#16A06A→#2BD07F</code></div>
+        <div class="sw"><i style="background:#ECEEF0;"></i>收件字 <code>#ECEEF0</code></div>
+        <div class="sw"><i style="background:#8FA0A0;"></i>收件时间 <code>#8FA0A0</code></div>
+        <div class="sw"><i style="background:#C7F2DC;"></i>发件时间 <code>#C7F2DC</code></div>
+      </div>
+    </div>
+
+    <!-- 方案4 玻璃 -->
+    <div class="card">
+      <div class="cname">④ 玻璃拟态</div>
+      <div class="cdesc">半透明气泡 + 背景模糊，壁纸从气泡透出。最潮，但依赖聊天区透明（与之前 Quick 透明修复同一技术栈，需谨慎）。</div>
+      <div class="phone" style="--in:rgba(255,255,255,.08);--out:rgba(123,108,240,.82);--out-raw:rgba(123,108,240,.82);">
+        <div class="row"><div class="avatar av-peer">抖</div><div class="bubble in" style="background:rgba(255,255,255,.08);backdrop-filter:blur(8px);color:#EDEDF2;">在吗？帮我看下这条私信怎么回<span class="meta" style="color:rgba(255,255,255,.55);">14:02</span></div></div>
+        <div class="row me"><div class="avatar av-me">我</div><div class="bubble out" style="background:rgba(123,108,240,.82);backdrop-filter:blur(8px);color:#fff;">稍等，我让 AI 先拟一版<span class="meta" style="color:#E3DEFF;">已读 ✓✓</span></div></div>
+        <div class="row"><div class="avatar av-peer">抖</div><div class="bubble in" style="background:rgba(255,255,255,.08);backdrop-filter:blur(8px);color:#EDEDF2;">其实我想要的是那种手机 QQ 滑起来很跟手的感觉，现在这个上滑一顿一顿的<span class="meta" style="color:rgba(255,255,255,.55);">14:03</span></div></div>
+        <div class="row me"><div class="avatar av-me">我</div><div class="bubble out" style="background:rgba(123,108,240,.82);backdrop-filter:blur(8px);color:#fff;">这个得改滚动逻辑，不是换颜色能解决的<span class="meta" style="color:#E3DEFF;">已读 ✓✓</span></div></div>
+      </div>
+      <div class="swatches">
+        <div class="sw"><i style="background:rgba(255,255,255,.12);"></i>收件底 <code>rgba(255,255,255,.08)</code></div>
+        <div class="sw"><i style="background:rgba(123,108,240,.82);"></i>发件底 <code>rgba(123,108,240,.82)</code></div>
+        <div class="sw"><i style="background:#EDEDF2;"></i>收件字 <code>#EDEDF2</code></div>
+        <div class="sw"><i style="background:rgba(255,255,255,.55);"></i>收件时间 <code>rgba(255,255,255,.55)</code></div>
+        <div class="sw"><i style="background:#E3DEFF;"></i>发件时间 <code>#E3DEFF</code></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="legend">
+    <h2>给 Codex 的改动清单（基于 dmshoot/gui/widgets/chat_view.py）</h2>
+    <table>
+      <tr><th>当前常量 / 位置</th><th>含义</th><th>① 雅紫</th><th>② 深海蓝</th><th>③ 薄荷绿</th><th>④ 玻璃</th></tr>
+      <tr><td><code>INCOMING_BUBBLE_COLOR</code> (L46)</td><td>收件气泡底</td><td>#313042</td><td>#1B2733</td><td>#2A2E33</td><td>rgba(255,255,255,.08)</td></tr>
+      <tr><td><code>OUTGOING_BUBBLE_COLOR</code> (L47)</td><td>发件气泡底</td><td>实心 #7B6CF0<br>(建议渐变)</td><td>#2B5278</td><td>实心 #16A06A<br>(建议渐变)</td><td>rgba(123,108,240,.82)</td></tr>
+      <tr><td><code>INCOMING_META_COLOR</code> (L48)</td><td>收件时间</td><td>#9A9AB2</td><td>#7E93A6</td><td>#8FA0A0</td><td>rgba(255,255,255,.55)</td></tr>
+      <tr><td><code>OUTGOING_META_COLOR</code> (L49)</td><td>发件时间</td><td>#D9D2FF</td><td>#BBD3E8</td><td>#C7F2DC</td><td>#E3DEFF</td></tr>
+      <tr><td><code>OUTGOING_CHECK_COLOR</code> (L50)</td><td>已读双勾</td><td>#F2EEFF</td><td>#EAF3FB</td><td>#EAFBF1</td><td>#F2EEFF</td></tr>
+      <tr><td><code>text_color</code> (L373, BubbleWidget)</td><td>气泡正文</td><td>#FFFFFF(不变)</td><td>#FFFFFF(不变)</td><td>#FFFFFF(不变)</td><td>#FFFFFF(不变)</td></tr>
+    </table>
+    <p class="note">
+      <b>注意 1（渐变）：</b>①②④ 的「发件底」若要做成预览里的渐变质感，需改 <code>BubbleWidget.paintEvent</code>（L529-538）——当前用 <code>QColor(OUTGOING_BUBBLE_COLOR)</code> 平涂，要换成 <code>QLinearGradient</code>。若只想换纯色，保持现有 <code>QColor</code> 写法即可，改动最小。<br>
+      <b>注意 2（玻璃方案④）：</b>半透明气泡要求聊天区背景本身是透明/可见壁纸的，和之前「Quick 透明覆盖」是同一技术栈。在 QWidget 路径下需确认气泡所在容器不被实心背景挡住，否则半透明会糊在深色底上。建议先落地 ①②③ 之一，④ 单独评估。<br>
+      <b>注意 3（尾巴颜色）：</b>气泡尾巴（CSS 里 <code>.in::after</code> 对应）在代码里是气泡路径同一画笔绘制，改底色调会自动跟随，无需单独处理。<br>
+      <b>推荐落地顺序：</b>先做 ① 雅紫（纯色版，零风险）→ 若想要质感再加渐变 paintEvent。
+    </p>
+  </div>
+</body>
+</html>

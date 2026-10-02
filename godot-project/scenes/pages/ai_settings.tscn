@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://ai_settings_page"]
+
+[ext_resource type="Script" path="res://scripts/settings/ai_settings_page.gd" id="1_ai"]
+
+[node name="AISettingsPage" type="Control"]
+script = ExtResource("1_ai")

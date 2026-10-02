@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>阿金 · Tujue</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://chinese-fonts-cdn.deno.dev" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..600&family=Noto+Sans+SC:wght@400..600&family=Noto+Serif+SC:wght@400..600&display=swap" rel="stylesheet">
+<link href="https://chinese-fonts-cdn.deno.dev/packages/lxgwwenkai/dist/LXGWWenKai-Regular/result.css" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+a, button, .card, .contact-link, .pill, .carousel-dots .dot {
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+html { scroll-behavior: smooth; }
+
+::selection { background: rgba(251,113,133,0.18); color: #1c1c1e; }
+::-moz-selection { background: rgba(251,113,133,0.18); color: #1c1c1e; }
+
+body {
+  font-family: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  background: linear-gradient(140deg, #f5d4b8 0%, #f0d4d4 25%, #d8d8e8 55%, #c8d8e8 100%);
+  color: #1c1c1e;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  top: -15%; right: -8%;
+  width: 50vw; height: 50vw;
+  background: radial-gradient(circle, rgba(245,158,11,0.18) 0%, transparent 65%);
+  pointer-events: none; z-index: 0;
+}
+body::after {
+  content: '';
+  position: fixed;
+  bottom: -10%; left: -5%;
+  width: 40vw; height: 40vw;
+  background: radial-gradient(circle, rgba(139,92,246,0.18) 0%, transparent 65%);
+  pointer-events: none; z-index: 0;
+}
+
+.navbar {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(245,240,235,0.72);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+  padding: 0 40px;
+}
+.navbar-inner {
+  max-width: 1040px; margin: 0 auto;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 56px;
+}
+.nav-name { font-size: 16px; font-weight: 600; color: #1c1c1e; text-decoration: none; }
+.nav-right { display: flex; align-items: center; gap: 2px; }
+.nav-link, .lang-toggle {
+  font-size: 14px; color: #71717a; text-decoration: none;
+  padding: 7px 16px; border-radius: 8px;
+  transition: background 0.2s, color 0.2s;
+  background: none; border: none; cursor: pointer;
+  font-family: inherit;
+}
+.nav-link:hover, .lang-toggle:hover { background: rgba(255,255,255,0.5); color: #1c1c1e; }
+.lang-toggle.active { color: #2563eb; font-weight: 500; }
+
+.container { max-width: 1040px; margin: 0 auto; padding: 0 40px 120px; position: relative; z-index: 1; }
+
+.hero {
+  padding: 80px 0 64px;
+}
+.status-badge {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; color: #059669;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  padding: 5px 14px; border-radius: 12px;
+  border: 1px solid rgba(5,150,105,0.15);
+  background: linear-gradient(135deg, rgba(5,150,105,0.08), rgba(5,150,105,0.04));
+  margin-bottom: 28px;
+}
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #059669; box-shadow: 0 0 8px rgba(5,150,105,0.4); }
+.hero h1 {
+  font-family: 'LXGW WenKai', 'Noto Serif SC', 'Noto Sans SC', serif;
+  font-size: 56px;
+  font-weight: 500;
+  letter-spacing: 4px;
+  margin-bottom: 12px;
+}
+.hero .sub { font-size: 17px; color: #71717a; margin-bottom: 24px; }
+.hero .bio { font-size: 17px; color: #555; line-height: 1.9; max-width: 680px; }
+.hero .bio strong { color: #1c1c1e; font-weight: 500; }
+
+.section { margin-bottom: 100px; }
+
+.section-head {
+  display: flex; align-items: center; gap: 16px;
+  margin-bottom: 32px;
+}
+.section-head .label {
+  font-family: 'LXGW WenKai', 'Noto Serif SC', 'Noto Sans SC', serif;
+  font-size: 22px;
+  font-weight: 500;
+  color: #1c1c1e;
+  letter-spacing: 2px;
+}
+.section-head .line {
+  flex: 1; height: 1px;
+  background: linear-gradient(90deg, rgba(180,140,90,0.4), transparent);
+}
+
+.cards-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.cards-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+
+.creative-row {
+  display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px;
+}
+
+.skills-layout {
+  display: grid; grid-template-columns: 0.6fr 1.4fr; gap: 20px;
+  align-items: stretch;
+}
+.skills-side {
+  background: linear-gradient(160deg, rgba(180,83,9,0.08), rgba(245,158,11,0.04));
+  border: 1px solid rgba(180,83,9,0.15);
+  border-radius: 18px;
+  padding: 28px 24px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  gap: 20px;
+}
+.side-num {
+  font-family: 'LXGW WenKai', 'Noto Serif SC', serif;
+  font-size: 64px;
+  font-weight: 500;
+  background: linear-gradient(135deg, #b45309, #f59e0b);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1;
+}
+.side-text {
+  font-family: 'LXGW WenKai', 'Noto Serif SC', serif;
+  font-size: 14px;
+  color: #555;
+  line-height: 1.9;
+}
+.skills-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+}
+
+.creative-carousel {
+  position: relative;
+  min-height: 200px;
+}
+.carousel-track {
+  position: relative;
+  min-height: 180px;
+}
+.carousel-slide {
+  position: absolute; top: 0; left: 0; right: 0;
+  opacity: 0;
+  transform: translateX(20px);
+  transition: opacity 0.5s, transform 0.5s;
+  pointer-events: none;
+}
+.carousel-slide.active {
+  opacity: 1;
+  transform: translateX(0);
+  position: relative;
+  pointer-events: auto;
+}
+.carousel-card { min-height: 160px; }
+.carousel-dots {
+  display: flex; justify-content: center; gap: 8px;
+  margin-top: 18px;
+}
+.carousel-dots .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: rgba(0,0,0,0.15);
+  border: none; cursor: pointer;
+  transition: background 0.25s, transform 0.25s, width 0.25s;
+  padding: 0;
+}
+.carousel-dots .dot.active {
+  background: linear-gradient(135deg, #b45309, #d97706);
+  width: 24px;
+  border-radius: 4px;
+}
+
+.card {
+  background: rgba(255,255,255,0.5);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.4);
+  border-radius: 18px;
+  padding: 28px 32px;
+  text-decoration: none; color: inherit;
+  transition: transform 0.25s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.25s, background 0.25s;
+  cursor: pointer;
+  display: block;
+  position: relative;
+  overflow: hidden;
+}
+.card::before {
+  content: '';
+  position: absolute;
+  top: var(--mx, 50%);
+  left: var(--my, 50%);
+  width: 300px; height: 300px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(245,158,11,0.18) 0%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+.card:hover {
+  transform: scale(1.025);
+  background: rgba(255,255,255,0.7);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.05), 0 2px 8px rgba(0,0,0,0.03);
+}
+.card:hover::before { opacity: 1; }
+.card:active { transform: scale(0.98); }
+
+.card-name { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+.card-desc { font-size: 14px; color: #555; line-height: 1.65; margin-bottom: 16px; }
+.card-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 500;
+  padding: 3px 11px 3px 5px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #2d2520, #3a2e26);
+  color: #f5f0eb;
+  border: 1px solid rgba(0,0,0,0.12);
+  font-family: 'Inter', 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  letter-spacing: 0.3px;
+  transition: transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+}
+.pill-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: rgba(255,255,255,0.12);
+  font-size: 10px; line-height: 1;
+}
+.pill:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(45,37,32,0.18); }
+.pill-a { background: linear-gradient(135deg, #78350f, #92400e); }
+.pill-g { background: linear-gradient(135deg, #064e3b, #065f46); }
+.pill-p { background: linear-gradient(135deg, #4c1d95, #5b21b6); }
+
+.card-full {
+  background: rgba(255,255,255,0.45);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 18px;
+  padding: 32px 36px;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.card-full:hover { transform: scale(1.01); box-shadow: 0 8px 30px rgba(0,0,0,0.04); }
+
+.card-full-top {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 20px; margin-bottom: 10px;
+}
+.card-full-name { font-size: 20px; font-weight: 600; }
+.card-full-desc { font-size: 14px; color: #555; line-height: 1.7; margin-bottom: 16px; }
+
+.pills-row { display: flex; flex-wrap: wrap; gap: 12px; }
+
+.stack-text {
+  font-size: 13px;
+  color: #a1a1aa;
+  letter-spacing: 1px;
+  line-height: 2;
+}
+
+.now-items { display: flex; flex-direction: column; }
+.now-row {
+  display: flex; gap: 16px; padding: 18px 0;
+  border-bottom: 1px solid rgba(0,0,0,0.04);
+  transition: transform 0.2s;
+}
+.now-row:last-child { border-bottom: none; }
+.now-row:hover { transform: translateX(6px); }
+.now-dot { font-size: 15px; flex-shrink: 0; width: 24px; margin-top: 2px; }
+.now-text { font-size: 16px; color: #555; line-height: 1.5; }
+
+.contact-row { display: flex; flex-wrap: wrap; gap: 12px; }
+.contact-link {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 15px; color: #555; text-decoration: none;
+  padding: 10px 22px;
+  background: rgba(255,255,255,0.45);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 12px;
+  transition: transform 0.2s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s, background 0.2s, color 0.2s;
+}
+.contact-link:hover {
+  transform: scale(1.04);
+  background: rgba(255,255,255,0.7);
+  color: #2563eb;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.04);
+}
+
+.footer {
+  font-size: 14px; color: #a1a1aa;
+  padding-top: 60px;
+  text-align: center;
+}
+
+@media (max-width: 768px) {
+  .cards-2, .cards-3, .creative-row, .skills-layout, .skills-grid { grid-template-columns: 1fr; }
+  .hero h1 { font-size: 34px; }
+  .hero { padding: 48px 0 48px; }
+  .container { padding: 0 20px 80px; }
+  .navbar { padding: 0 16px; }
+  .section { margin-bottom: 72px; }
+}
+</style>
+</head>
+<body>
+
+<div class="navbar">
+  <div class="navbar-inner">
+    <a href="#" class="nav-name">阿金</a>
+    <div class="nav-right">
+      <a href="#projects" class="nav-link" data-i18n="nav.projects">项目</a>
+      <a href="#creative" class="nav-link" data-i18n="nav.creative">创作</a>
+      <a href="#skills" class="nav-link" data-i18n="nav.skills">能力</a>
+      <a href="#contact" class="nav-link" data-i18n="nav.contact">联系</a>
+      <button class="lang-toggle active" onclick="setLang('zh')">中文</button>
+      <button class="lang-toggle" onclick="setLang('en')">EN</button>
+    </div>
+  </div>
+</div>
+
+<div class="container">
+
+  <div class="hero">
+    <div class="status-badge">
+      <span class="status-dot"></span>
+      <span data-i18n="status">一个月内到岗 · 深圳</span>
+    </div>
+    <h1>阿金</h1>
+    <p class="sub" data-i18n="meta">19岁 · 独立开发者 · AI 应用方向 <span style="color:#a1a1aa">|</span> 高中休学自学编程</p>
+    <p class="bio" data-i18n="bio">
+      半年间从零自学 <strong>Python</strong>，独立交付 4 个可运行项目：桌面端多平台私信聚合、本地 AI 桌宠（Windows + Android）、视频自动发布工具、DeepSeek 对话导出工具。关注 AI 在真实场景里的落地——折腾过 llama.cpp 本地推理、逆向过平台通信协议、用 CSS hack 绕过虚拟列表限制。也做过 AI 短剧、独立运营过 9 个平台的虚拟角色账号。不会背八股文，但能干活。
+    </p>
+  </div>
+
+  <div class="section" id="projects">
+    <div class="section-head">
+      <span class="label" data-i18n="projects.title">项目案例</span>
+      <span class="line"></span>
+    </div>
+    <div class="cards-2">
+
+      <a href="https://github.com/Agying3/DMShoot" class="card" target="_blank">
+        <div class="card-name">DMShoot</div>
+        <div class="card-desc" data-i18n="projects.dmshoot">多平台私信聚合桌面应用。接入 B站 + 抖音私信，集成 DeepSeek 多角色 AI 自动回复，SQLite WAL 五层防御保障消息持久化。</div>
+        <div class="card-tags">
+          <span class="pill"><span class="pill-icon">🖥️</span>PySide6</span>
+          <span class="pill"><span class="pill-icon">💾</span>SQLite</span>
+          <span class="pill"><span class="pill-icon">🎭</span>Playwright</span>
+          <span class="pill pill-a"><span class="pill-icon">📡</span>Protobuf</span>
+        </div>
+      </a>
+
+      <a href="https://github.com/Agying3/HickHole" class="card" target="_blank">
+        <div class="card-name">HickHole</div>
+        <div class="card-desc" data-i18n="projects.hickhole">本地 AI 像素桌宠。26 只机器人群体物理模拟，Windows 透明分层窗口 + Android APK 内置 llama.cpp JNI 本地推理。</div>
+        <div class="card-tags">
+          <span class="pill pill-g"><span class="pill-icon">⚙️</span>C++20</span>
+          <span class="pill pill-g"><span class="pill-icon">☕</span>Java JNI</span>
+          <span class="pill pill-a"><span class="pill-icon">🧠</span>llama.cpp</span>
+          <span class="pill"><span class="pill-icon">🐍</span>Python</span>
+        </div>
+      </a>
+
+      <a href="https://github.com/Agying3/social-auto-upload" class="card" target="_blank">
+        <div class="card-name">Tujue AutoSend</div>
+        <div class="card-desc" data-i18n="projects.autosend">多平台视频一键发布工具。Fork 上游项目后为其添加桌面 GUI、单文件 EXE 打包和可视化登录管理，覆盖 5 个平台。</div>
+        <div class="card-tags">
+          <span class="pill"><span class="pill-icon">🌶️</span>Flask</span>
+          <span class="pill"><span class="pill-icon">🪟</span>pywebview</span>
+          <span class="pill pill-p"><span class="pill-icon">📱</span>5 platforms</span>
+        </div>
+      </a>
+
+      <a href="https://github.com/Agying3/dialog-export" class="card" target="_blank">
+        <div class="card-name">Dialog Export</div>
+        <div class="card-desc" data-i18n="projects.export">DeepSeek 对话全量导出工具。CSS hack 欺骗 React 虚拟列表渲染全部 DOM，自动校验导出完整性。</div>
+        <div class="card-tags">
+          <span class="pill"><span class="pill-icon">🖥️</span>PySide6</span>
+          <span class="pill"><span class="pill-icon">🎭</span>Playwright</span>
+          <span class="pill pill-p"><span class="pill-icon">🎨</span>CSS Hack</span>
+        </div>
+      </a>
+
+    </div>
+  </div>
+
+  <div class="section" id="creative">
+    <div class="section-head">
+      <span class="label" data-i18n="creative.title">创作 & 运营</span>
+      <span class="line"></span>
+    </div>
+    <div class="creative-carousel">
+      <div class="carousel-track" id="creativeTrack">
+        <div class="carousel-slide active" data-slide="0">
+          <a href="https://weixin.qq.com/sph/AXO2Uv9Oze" class="card carousel-card" target="_blank">
+            <div class="card-name" data-i18n="creative.drama">尘星计划 · AI 短剧</div>
+            <div class="card-desc" data-i18n="creative.drama_desc">参与制作 AI 短剧《相亲迷局》，负责从剧本生成到成片的 AI 生产管线搭建，探索 AI 辅助内容创作的工业化流程。</div>
+            <div class="card-tags">
+              <span class="pill pill-p"><span class="pill-icon">🎬</span>AI 短剧</span>
+              <span class="pill pill-a"><span class="pill-icon">✨</span>尘星计划</span>
+            </div>
+          </a>
+        </div>
+        <div class="carousel-slide" data-slide="1">
+          <div class="card carousel-card">
+            <div class="card-name" data-i18n="creative.virtual">虚拟角色跨平台运营</div>
+            <div class="card-desc" data-i18n="creative.virtual_desc">独立运营 9 个视频平台的虚拟角色账号，覆盖国内外主流平台。从内容创作到 AI 私信回复全链路自动化。</div>
+            <div class="card-tags">
+              <span class="pill pill-g"><span class="pill-icon">🌍</span>9 platforms</span>
+              <span class="pill"><span class="pill-icon">🤖</span>AI Agent</span>
+              <span class="pill pill-a"><span class="pill-icon">⚡</span>Automation</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="carousel-dots">
+        <button class="dot active" data-dot="0" onclick="goCreative(0)"></button>
+        <button class="dot" data-dot="1" onclick="goCreative(1)"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="section" id="skills">
+    <div class="section-head">
+      <span class="label" data-i18n="skills.title">核心能力</span>
+      <span class="line"></span>
+    </div>
+    <div class="skills-layout">
+      <div class="skills-side">
+        <div class="side-num">04</div>
+        <div class="side-text" data-i18n="skills.side">从 Python 桌面端，到 AI Agent 编排，到 Docker 部署，再到跨平台 API 对接——这四块拼在一起，就是我能独立交付的完整链路。</div>
+      </div>
+      <div class="skills-grid">
+
+      <div class="card">
+        <div class="card-name" data-i18n="skills.py_desktop">Python 桌面应用</div>
+        <div class="card-desc" data-i18n="skills.py_desktop_desc">3 个 PySide6 项目从零到打包 EXE，含毛玻璃 UI、QThread 多线程、QPainter 手写图表。</div>
+        <div class="card-tags">
+          <span class="pill"><span class="pill-icon">🖥️</span>PySide6</span>
+          <span class="pill"><span class="pill-icon">📦</span>PyInstaller</span>
+          <span class="pill"><span class="pill-icon">🔀</span>QThread</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-name" data-i18n="skills.ai_agent">AI Agent 开发</div>
+        <div class="card-desc" data-i18n="skills.ai_agent_desc">LangChain + LangGraph Agent 架构，Qdrant 向量库，DeepSeek 多角色引擎，本地 llama.cpp 推理。</div>
+        <div class="card-tags">
+          <span class="pill pill-a"><span class="pill-icon">🔗</span>LangChain</span>
+          <span class="pill pill-a"><span class="pill-icon">🔍</span>Qdrant</span>
+          <span class="pill pill-g"><span class="pill-icon">🧠</span>llama.cpp</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-name" data-i18n="skills.docker">Docker & 部署</div>
+        <div class="card-desc" data-i18n="skills.docker_desc">Docker Compose 管理 Qdrant + AnythingLLM + Redis 容器，WSL2 生产环境部署，Dockerfile 多阶段构建。</div>
+        <div class="card-tags">
+          <span class="pill pill-g"><span class="pill-icon">🐳</span>Docker</span>
+          <span class="pill pill-g"><span class="pill-icon">🧱</span>Redis</span>
+          <span class="pill"><span class="pill-icon">🖥️</span>WSL2</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-name" data-i18n="skills.api">多平台 API 对接</div>
+        <div class="card-desc" data-i18n="skills.api_desc">抖音 Protobuf 协议解析，B站 HTTP 轮询，小红书签名逆向，Playwright 自动化扫码，插件化架构支持热插拔。</div>
+        <div class="card-tags">
+          <span class="pill pill-p"><span class="pill-icon">🔓</span>逆向</span>
+          <span class="pill"><span class="pill-icon">🔌</span>WebSocket</span>
+          <span class="pill"><span class="pill-icon">📡</span>Protobuf</span>
+        </div>
+      </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <span class="label" data-i18n="stack.title">技术栈</span>
+      <span class="line"></span>
+    </div>
+    <div class="pills-row">
+      <span class="stack-text">Python · PySide6 · LangChain · Docker · SQLite · Playwright · C++ · Flask · Redis · Git · llama.cpp</span>
+    </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <span class="label" data-i18n="now.title">当前动态</span>
+      <span class="line"></span>
+    </div>
+    <div class="card">
+      <div class="now-items">
+        <div class="now-row">
+          <span class="now-dot">&#9679;</span>
+          <span class="now-text" data-i18n="now.job">在深圳找 AI 应用开发 / Python 后端方向的全职机会</span>
+        </div>
+        <div class="now-row">
+          <span class="now-dot">&#9675;</span>
+          <span class="now-text" data-i18n="now.tts">给 HickHole 的 Android 端加本地语音合成能力</span>
+        </div>
+        <div class="now-row">
+          <span class="now-dot">&#9675;</span>
+          <span class="now-text" data-i18n="now.writing">把几个 PySide6 项目的研究过程整理成技术文章</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section" id="contact">
+    <div class="section-head">
+      <span class="label" data-i18n="contact.title">联系</span>
+      <span class="line"></span>
+    </div>
+    <div class="contact-row">
+      <a href="https://github.com/Agying3" class="contact-link" target="_blank">GitHub · Agying3</a>
+      <a href="mailto:2127975080@qq.com" class="contact-link">2127975080@qq.com</a>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span data-i18n="footer">阿金 · 2026 · 深圳</span>
+  </div>
+
+</div>
+
+<script>
+const i18n={zh:{"nav.projects":"项目","nav.creative":"创作","nav.skills":"能力","nav.contact":"联系","status":"一个月内到岗 · 深圳","meta":'19岁 · 独立开发者 · AI 应用方向 <span style="color:#a1a1aa">|</span> 高中休学自学编程',"bio":'半年间从零自学 <strong>Python</strong>，独立交付 4 个可运行项目：桌面端多平台私信聚合、本地 AI 桌宠（Windows + Android）、视频自动发布工具、DeepSeek 对话导出工具。关注 AI 在真实场景里的落地——折腾过 llama.cpp 本地推理、逆向过平台通信协议、用 CSS hack 绕过虚拟列表限制。也做过 AI 短剧、独立运营过 9 个平台的虚拟角色账号。不会背八股文，但能干活。',"projects.title":"项目案例","projects.dmshoot":"多平台私信聚合桌面应用。接入 B站 + 抖音私信，集成 DeepSeek 多角色 AI 自动回复，SQLite WAL 五层防御保障消息持久化。","projects.hickhole":"本地 AI 像素桌宠。26 只机器人群体物理模拟，Windows 透明分层窗口 + Android APK 内置 llama.cpp JNI 本地推理。","projects.autosend":"多平台视频一键发布工具。Fork 上游项目后为其添加桌面 GUI、单文件 EXE 打包和可视化登录管理，覆盖 5 个平台。","projects.export":"DeepSeek 对话全量导出工具。CSS hack 欺骗 React 虚拟列表渲染全部 DOM，自动校验导出完整性。","creative.title":"创作 & 运营","creative.drama":"尘星计划 · AI 短剧","creative.drama_desc":"参与制作 AI 短剧《相亲迷局》，负责从剧本生成到成片的 AI 生产管线搭建，探索 AI 辅助内容创作的工业化流程。","creative.virtual":"虚拟角色跨平台运营","creative.virtual_desc":"独立运营 9 个视频平台的虚拟角色账号，覆盖国内外主流平台。从内容创作到 AI 私信回复全链路自动化。","skills.title":"核心能力","skills.py_desktop":"Python 桌面应用","skills.py_desktop_desc":"3 个 PySide6 项目从零到打包 EXE，含毛玻璃 UI、QThread 多线程、QPainter 手写图表。","skills.ai_agent":"AI Agent 开发","skills.ai_agent_desc":"LangChain + LangGraph Agent 架构，Qdrant 向量库，DeepSeek 多角色引擎，本地 llama.cpp 推理。","skills.docker":"Docker & 部署","skills.docker_desc":"Docker Compose 管理 Qdrant + AnythingLLM + Redis 容器，WSL2 生产环境部署，Dockerfile 多阶段构建。","skills.api":"多平台 API 对接","skills.api_desc":"抖音 Protobuf 协议解析，B站 HTTP 轮询，小红书签名逆向，Playwright 自动化扫码，插件化架构支持热插拔。","skills.side":"从 Python 桌面端，到 AI Agent 编排，到 Docker 部署，再到跨平台 API 对接——这四块拼在一起，就是我能独立交付的完整链路。","stack.title":"技术栈","now.title":"当前动态","now.job":"在深圳找 AI 应用开发 / Python 后端方向的全职机会","now.tts":"给 HickHole 的 Android 端加本地语音合成能力","now.writing":"把几个 PySide6 项目的研究过程整理成技术文章","contact.title":"联系","footer":"阿金 · 2026 · 深圳"},en:{"nav.projects":"Projects","nav.creative":"Creative","nav.skills":"Skills","nav.contact":"Contact","status":"Available within 1 month · Shenzhen, CN","meta":'19 · Independent Developer · AI Applications <span style="color:#a1a1aa">|</span> Self-taught during gap year',"bio":'Self-taught <strong>Python</strong> from scratch in 6 months. Independently delivered 4 working projects: a multi-platform DM aggregation desktop app, a local AI desktop pet (Windows + Android), a video auto-upload tool, and a DeepSeek conversation exporter. I care about AI in real-world scenarios — ran llama.cpp locally, reverse-engineered platform protocols, tricked React virtual lists with CSS hacks. Also produced an AI short drama and ran virtual character accounts across 9 platforms. No CS degree, but I ship.',"projects.title":"Projects","projects.dmshoot":"Multi-platform DM aggregation desktop app. Integrates Bilibili + Douyin DMs with DeepSeek multi-persona AI auto-reply. SQLite WAL 5-layer defense for message durability.","projects.hickhole":"Local AI pixel desktop pet. 26 robots with group physics simulation. Windows transparent layered window + Android APK with built-in llama.cpp JNI local inference.","projects.autosend":"One-click multi-platform video uploader. Forked upstream project, added desktop GUI, single-file EXE packaging, and visual login management across 5 platforms.","projects.export":"DeepSeek conversation bulk exporter. CSS hack tricks React virtual list into rendering all DOM nodes, with automatic integrity verification.","creative.title":"Creative & Ops","creative.drama":"Dust Star Project · AI Short Drama","creative.drama_desc":"Participated in producing the AI short drama \"Blind Date Maze\". Built the AI production pipeline from script generation to final cut, exploring industrialized AI-assisted content creation.","creative.virtual":"Virtual Character Operations","creative.virtual_desc":"Ran virtual character accounts across 9 video platforms, domestic and international. End-to-end automation from content creation to AI-powered DM replies.","skills.title":"Core Skills","skills.py_desktop":"Python Desktop Apps","skills.py_desktop_desc":"3 PySide6 projects from scratch to EXE. Glassmorphism UI, QThread multithreading, QPainter custom charts.","skills.ai_agent":"AI Agent Development","skills.ai_agent_desc":"LangChain + LangGraph Agent architecture, Qdrant vector DB, DeepSeek multi-persona engine, local llama.cpp inference.","skills.docker":"Docker & Deployment","skills.docker_desc":"Docker Compose managing Qdrant + AnythingLLM + Redis containers. WSL2 production deployment. Dockerfile multi-stage builds.","skills.api":"Multi-platform API","skills.api_desc":"Douyin Protobuf parsing, Bilibili HTTP polling, XHS signature reverse-engineering, Playwright automated login, plugin architecture with hot-swap.","skills.side":"From Python desktop apps, to AI Agent orchestration, to Docker deployment, to cross-platform API integration — these four pieces together are the complete pipeline I can independently deliver.","stack.title":"Tech Stack","now.title":"Now","now.job":"Seeking full-time AI application / Python backend roles in Shenzhen","now.tts":"Adding local TTS to HickHole's Android build","now.writing":"Writing up PySide6 project deep-dives as technical articles","contact.title":"Contact","footer":"Tujue · 2026 · Shenzhen"}};
+var currentLang='zh';
+function setLang(l){
+  currentLang=l;
+  document.documentElement.lang=l==='zh'?'zh-CN':'en';
+  document.querySelectorAll('.lang-toggle').forEach(function(b){
+    b.classList.toggle('active',b.textContent.trim()===(l==='zh'?'中文':'EN'));
+  });
+  document.querySelectorAll('[data-i18n]').forEach(function(el){
+    var k=el.getAttribute('data-i18n');
+    if(i18n[l][k]) el.innerHTML=i18n[l][k];
+  });
+}
+var s=localStorage.getItem('lang');
+if(s) setLang(s);
+
+// Carousel
+var currentCreative = 0;
+function goCreative(idx) {
+  currentCreative = idx;
+  var slides = document.querySelectorAll('.carousel-slide');
+  var dots = document.querySelectorAll('.carousel-dots .dot');
+  slides.forEach(function(s, i) {
+    s.classList.toggle('active', i === idx);
+  });
+  dots.forEach(function(d, i) {
+    d.classList.toggle('active', i === idx);
+  });
+}
+
+// Mouse-tracking radial highlight on cards
+document.querySelectorAll('.card').forEach(function(card) {
+  card.addEventListener('mousemove', function(e) {
+    var rect = card.getBoundingClientRect();
+    card.style.setProperty('--mx', (e.clientX - rect.left) + 'px');
+    card.style.setProperty('--my', (e.clientY - rect.top) + 'px');
+  });
+});
+</script>
+
+</body>
+</html>

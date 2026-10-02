@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://prompts_page"]
+
+[ext_resource type="Script" path="res://scripts/settings/prompts_page.gd" id="1_pp"]
+
+[node name="PromptsPage" type="Control"]
+script = ExtResource("1_pp")

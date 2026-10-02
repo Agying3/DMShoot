@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3 uid="uid://settings_page"]
+
+[ext_resource type="Script" path="res://scripts/settings/settings_page.gd" id="1_set"]
+
+[node name="SettingsPage" type="Control"]
+script = ExtResource("1_set")

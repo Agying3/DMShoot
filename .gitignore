@@ -88,3 +88,19 @@ null/
 push*.txt
 push_out*.txt
 .workbuddy/
+
+# Local caches, history-rewrite workspace and private database backups
+/.git-rewrite/
+/.pyinstaller-cache/
+/.pyinstaller-cache-codex/
+/dmshoot/data/backups/
+desktop.ini
+/.pytest_cache/
+/godot-project/.godot/
+/godot-project/Godot*.zip
+# Accidentally saved terminal pager help, not Python source
+/t_dmshoot_gui.py *
+
+# Keep project wallpaper assets despite the generic bg.jpg rule
+!/resources/bg.jpg
+!/godot-project/bg.jpg

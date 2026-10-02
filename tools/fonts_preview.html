@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NapCat WebUI 字体包 · 预览</title>
+<style>
+    @font-face {
+        font-family: 'AaCuteLocal';
+        src: url('./fonts/AaCute.woff') format('woff');
+        font-display: swap;
+    }
+    @font-face {
+        font-family: 'AaCuteFull';
+        src: url('./fonts/full/AaCute-full.ttf') format('truetype');
+        font-display: swap;
+    }
+    @font-face {
+        font-family: 'AaCuteUI';
+        src: url('./fonts/AaCute-UI.woff') format('woff');
+        font-display: swap;
+    }
+    @font-face {
+        font-family: 'JBLocal';
+        src: url('./fonts/JetBrainsMono.ttf') format('truetype');
+        font-display: swap;
+    }
+    @font-face {
+        font-family: 'JBLocal';
+        src: url('./fonts/JetBrainsMono-Italic.ttf') format('truetype');
+        font-style: italic;
+        font-display: swap;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+        margin: 0; padding: 32px 36px 60px;
+        background: #12161C; color: #E6EAF0;
+        font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        line-height: 1.6;
+    }
+    h1 { font-size: 22px; font-weight: 600; margin: 0 0 6px; }
+    .sub { font-size: 13px; color: #8A94A3; margin: 0 0 26px; }
+    .sub code { background: #1B212B; padding: 2px 6px; border-radius: 4px; color: #9FD0FF; font-size: 12px; }
+
+    h2 {
+        font-size: 15px; font-weight: 600; margin: 34px 0 12px;
+        padding-left: 10px; border-left: 3px solid #3B82F6;
+    }
+
+    table { border-collapse: collapse; width: 100%; font-size: 13px; margin-bottom: 8px; }
+    th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #232A35; }
+    th { color: #8A94A3; font-weight: 500; font-size: 12px; }
+    td.mono { font-family: 'JBLocal', Consolas, monospace; font-size: 12px; color: #9FD0FF; }
+
+    .card {
+        background: #1A2029; border: 1px solid #26303D;
+        border-radius: 12px; padding: 20px 22px; margin-bottom: 14px;
+    }
+    .card.light { background: #F7F7F9; color: #23282F; border-color: #E3E5EA; }
+
+    .card-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 14px; }
+    .card-head b { font-size: 15px; font-weight: 600; }
+    .card-head span { font-size: 12px; color: #8A94A3; }
+    .card.light .card-head span { color: #6B7280; }
+
+    .sample-lg { font-size: 30px; line-height: 1.45; margin: 4px 0 14px; }
+    .sample-md { font-size: 17px; line-height: 1.7; margin: 4px 0; }
+    .scale div { font-size: 12px; color: #8A94A3; margin: 2px 0; }
+    .scale { border-top: 1px dashed #2B3441; padding-top: 12px; margin-top: 14px; }
+    .card.light .scale { border-color: #DCDFE5; }
+    .card.light .scale div { color: #6B7280; }
+
+    .miss { color: #FF6B6B; text-decoration: underline wavy #FF6B6B 1px; }
+    .hit  { color: inherit; }
+
+    .cov {
+        display: inline-block; min-width: 62px; font-size: 12px;
+        font-family: 'JBLocal', Consolas, monospace;
+        color: #FFB454; margin-right: 10px;
+    }
+    .testrow { font-size: 15px; padding: 5px 0; border-bottom: 1px solid #202834; }
+    .testrow:last-child { border: 0; }
+
+    .bubbles { display: flex; flex-direction: column; gap: 9px; }
+    .grp { display: flex; }
+    .grp.me { flex-direction: row-reverse; }
+    .bub {
+        max-width: 78%; padding: 7px 11px; font-size: 15px; line-height: 1.4;
+        border-radius: 13px; position: relative;
+    }
+    .grp.you .bub { background: #232C38; color: #E6EAF0; }
+    .grp.me  .bub { background: linear-gradient(135deg, #3B82F6, #60A5FA); color: #fff; }
+    .tag {
+        font-size: 11px; color: #8A94A3; margin: 10px 0 4px;
+        font-family: 'JBLocal', Consolas, monospace;
+    }
+
+    pre {
+        margin: 0; font-family: 'JBLocal', Consolas, monospace;
+        font-size: 13px; line-height: 1.65; color: #C8D3E0;
+        background: #141A22; border: 1px solid #26303D;
+        border-radius: 10px; padding: 14px 16px; overflow-x: auto;
+    }
+    pre .k { color: #C792EA; } pre .s { color: #C3E88D; }
+    pre .c { color: #5C6773; } pre .n { color: #F78C6C; }
+
+    .warn {
+        background: rgba(255,107,107,.08); border: 1px solid rgba(255,107,107,.3);
+        border-left: 3px solid #FF6B6B; border-radius: 8px;
+        padding: 12px 16px; font-size: 13px; margin: 14px 0;
+    }
+    .warn b { color: #FF8F8F; }
+    .ok { color: #7EE2A8; }
+    .note { font-size: 12.5px; color: #8A94A3; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<h1>NapCat WebUI 字体包</h1>
+<p class="sub">
+    来源 <code>NapNeko/NapCatQQ · packages/napcat-webui-frontend/public/fonts/</code>
+    &nbsp;·&nbsp; 已下载到 <code>H:\DMShoot\tools\fonts\</code>
+</p>
+<p class="sub" style="color:#7EE2A8">
+    ✅ 已拍板：默认 <b>ui-aacute</b>（UI 控件用可爱体子集，聊天气泡用系统字体，可选全站可爱体）
+</p>
+
+<h2>文件清单</h2>
+<table>
+    <tr><th>文件</th><th>大小</th><th>字体族名</th><th>字符数</th><th>用途</th></tr>
+    <tr>
+        <td class="mono">AaCute.woff</td><td>291 KB</td>
+        <td>Aa偷吃可爱长大的</td><td>858（汉字 750）</td>
+        <td>WebUI <code>fontMode=aacute</code> 时的全局字体</td>
+    </tr>
+    <tr>
+        <td class="mono">JetBrainsMono.ttf</td><td>296 KB</td>
+        <td class="mono">JetBrains Mono Regular</td><td>1363（无中文）</td>
+        <td>代码编辑器 / 日志</td>
+    </tr>
+    <tr>
+        <td class="mono">JetBrainsMono-Italic.ttf</td><td>302 KB</td>
+        <td class="mono">JetBrains Mono Italic</td><td>1363（无中文）</td>
+        <td>同上，斜体</td>
+    </tr>
+    <tr style="background:rgba(126,226,168,.05)">
+        <td class="mono">full/AaCute-full.ttf</td><td style="color:#FFB454">11.06 MB</td>
+        <td>AaCute 完整版</td><td>22050（汉字 <b style="color:#7EE2A8">20902</b>）</td>
+        <td>源码资源，<b>没打包进 WebUI 产物</b>，已一并下载</td>
+    </tr>
+    <tr style="background:rgba(126,226,168,.05)">
+        <td class="mono">AaCute-UI.ttf</td><td style="color:#7EE2A8">0.50 MB</td>
+        <td>AaCute · UI 子集</td><td>1443（汉字 1312）</td>
+        <td><b>DMShoot 锁死打包用</b>，扫源码 + 提示词生成</td>
+    </tr>
+</table>
+<p class="note">
+    全仓库就这 3 个字体文件。默认 <code>fontMode=system</code> 下用的 Quicksand / Nunito / Inter
+    <b>没有打包、也没有 CDN 引入</b>，Windows 上实际落到 Segoe UI + 微软雅黑。
+</p>
+
+<h2>Aa 偷吃可爱长大的 <span style="font-size:12px;color:#8A94A3;font-weight:400">（AaCute.woff）</span></h2>
+
+<div class="card light">
+    <div class="card-head"><b>原味展示</b><span>浅底，30px</span></div>
+    <div class="sample-lg" style="font-family:'AaCuteLocal',sans-serif">
+        设置 · 主题 · 网络配置 · 服务器
+    </div>
+    <div class="sample-md" style="font-family:'AaCuteLocal',sans-serif">
+        登录 退出 确定 取消 保存 删除 编辑 新建 刷新 加载 更新 下载 上传
+    </div>
+    <div class="sample-md" style="font-family:'AaCuteLocal',sans-serif;color:#6B7280">
+        成功 失败 错误 警告 提示 信息 状态 在线 离线 连接 断开
+    </div>
+    <div class="scale">
+        <div style="font-family:'AaCuteLocal',sans-serif;font-size:12px">12px &nbsp;基础信息系统版本 0123456789</div>
+        <div style="font-family:'AaCuteLocal',sans-serif;font-size:14px">14px &nbsp;基础信息系统版本 0123456789</div>
+        <div style="font-family:'AaCuteLocal',sans-serif;font-size:16px">16px &nbsp;基础信息系统版本 0123456789</div>
+        <div style="font-family:'AaCuteLocal',sans-serif;font-size:20px">20px &nbsp;基础信息系统版本</div>
+        <div style="font-family:'AaCuteLocal',sans-serif;font-size:28px">28px &nbsp;基础信息系统</div>
+    </div>
+</div>
+
+<div class="warn">
+    <b>⚠ 这是「UI 文案子集」字体，不能直接拿来渲染聊天消息。</b><br>
+    构建脚本 <code>scripts/fontmin.cjs</code> 会扫描 <code>src/**/*.{tsx,ts,jsx,js,css}</code> 里出现过的汉字，
+    加上一段 UI 常用词表，再对 <code>AaCute-full.ttf</code> 做子集化 —— 所以只保留了 <b>750 个汉字</b>，
+    全是 NapCat 界面上写死的那批词。
+</div>
+
+<div class="card">
+    <div class="card-head"><b>实测：拿 5 条真实私信文本跑一遍</b><span>红色波浪线 = 缺字，会回退到系统字体</span></div>
+    <div id="tests">
+        <div class="testrow" data-miss="品宜想货">你好，请问这个商品还有货吗？我想下单两个，可以便宜一点吗？</div>
+        <div class="testrow" data-miss="烦老谢麻">在的吗，看到消息麻烦回我一下，谢谢老板！</div>
+        <div class="testrow" data-miss="三货">今天发货了吗，物流显示已经三天没有更新了</div>
+        <div class="testrow" data-miss="价喜很惠欢贵">这个颜色我很喜欢，就是价格有点贵，能优惠一点吗</div>
+        <div class="testrow" data-miss="宜抱款歉">抱歉久等了，稍后客服会联系您处理退款事宜</div>
+    </div>
+    <p class="note" style="margin-top:14px">
+        汉字平均命中率约 <b style="color:#FFB454">78%</b> —— 每句都有缺字，且缺的都是
+        「商品 / 价格 / 喜欢 / 谢谢」这类高频会话词。真上聊天界面会中英文混排得很难看。
+    </p>
+</div>
+
+<h2>为什么不全：体积 <span style="font-size:12px;color:#8A94A3;font-weight:400">（11.06 MB → 291 KB，砍掉 97% 的字形）</span></h2>
+<div class="card">
+    <table style="margin-bottom:14px">
+        <tr><th>版本</th><th>大小</th><th>汉字数</th><th>聊天文本命中率</th></tr>
+        <tr>
+            <td>完整版 <span class="mono">AaCute-full.ttf</span></td>
+            <td style="color:#FFB454">11.06 MB</td><td><b style="color:#7EE2A8">20902</b></td>
+            <td class="ok">100%</td>
+        </tr>
+        <tr>
+            <td>NapCat 打包的 <span class="mono">AaCute.woff</span></td>
+            <td>291 KB</td><td>750</td>
+            <td style="color:#FF6B6B">78%</td>
+        </tr>
+    </table>
+    <p class="note" style="margin-bottom:16px">
+        中文字体天生巨大：拉丁字体只要约 100 个字形（26 字母 × 2 + 数字 + 标点），
+        中文要覆盖 CJK 基本区就得 <b>2 万多个手绘字形</b>，平均每个字 0.5 KB 上下。
+        NapCat 的 WebUI 文案全是写死的，构建时扫一遍源码只要 750 个字，于是子集化掉 97% ——
+        代价是运行时出现的新字（用户昵称、动态内容）全部缺字，逐字回退到微软雅黑。
+    </p>
+
+    <div class="tag">子集版 —— 缺字处红色波浪线</div>
+    <div class="testrow" data-miss="品宜想货" style="border:0">
+        你好，请问这个商品还有货吗？我想下单两个，可以便宜一点吗？
+    </div>
+
+    <div class="tag" style="margin-top:16px">完整版 —— <span class="ok">全字命中，一个不缺</span></div>
+    <div style="font-family:'AaCuteFull','Microsoft YaHei',sans-serif;font-size:15px;padding:5px 0">
+        你好，请问这个商品还有货吗？我想下单两个，可以便宜一点吗？
+    </div>
+    <div style="font-family:'AaCuteFull','Microsoft YaHei',sans-serif;font-size:15px;padding:5px 0">
+        在的吗，看到消息麻烦回我一下，谢谢老板！这个颜色我很喜欢，就是价格有点贵，能优惠一点吗？
+    </div>
+</div>
+
+<h2>UI 子集：锁死打包的那个 <span style="font-size:12px;color:#7EE2A8;font-weight:400">（0.33 MB / 889 字）</span></h2>
+<div class="card light">
+    <div class="card-head"><b>AaCute-UI.woff</b><span>扫 dmshoot/ 源码 + prompts/ 提示词生成，UI 文案一个不缺</span></div>
+    <div class="sample-lg" style="font-family:'AaCuteUI',sans-serif">设置 · 主题 · 网络配置 · 服务器 · 登录 退出</div>
+    <div class="sample-md" style="font-family:'AaCuteUI',sans-serif">确定 取消 保存 删除 编辑 新建 刷新 加载 更新 下载 上传 搜索 发送</div>
+    <div class="sample-md" style="font-family:'AaCuteUI',sans-serif;color:#6B7280">成功 失败 错误 警告 提示 在线 离线 连接 断开 状态</div>
+    <div class="scale">
+        <div style="font-family:'AaCuteUI',sans-serif;font-size:12px">12px &nbsp;基础信息 系统 版本 网络 配置 &nbsp;0123456789</div>
+        <div style="font-family:'AaCuteUI',sans-serif;font-size:14px">14px &nbsp;基础信息 系统 版本 网络 配置 &nbsp;0123456789</div>
+        <div style="font-family:'AaCuteUI',sans-serif;font-size:16px">16px &nbsp;基础信息 系统 版本 网络 配置</div>
+        <div style="font-family:'AaCuteUI',sans-serif;font-size:20px">20px &nbsp;基础信息 系统 版本</div>
+    </div>
+</div>
+
+<h2>聊天气泡实拍对照 <span style="font-size:12px;color:#8A94A3;font-weight:400">（15px，TG 样式）</span></h2>
+<div class="card">
+    <div class="tag">AaCute（缺字处已回退成微软雅黑，注意混排）</div>
+    <div class="bubbles" style="font-family:'AaCuteLocal','Microsoft YaHei',sans-serif">
+        <div class="grp you"><div class="bub">在的吗，看到消息麻烦回我一下，谢谢老板！</div></div>
+        <div class="grp me"><div class="bub">在的，这个商品还有货，价格可以优惠</div></div>
+    </div>
+    <div class="tag" style="margin-top:18px">微软雅黑（系统默认，字字齐全）</div>
+    <div class="bubbles" style="font-family:'Microsoft YaHei',sans-serif">
+        <div class="grp you"><div class="bub">在的吗，看到消息麻烦回我一下，谢谢老板！</div></div>
+        <div class="grp me"><div class="bub">在的，这个商品还有货，价格可以优惠</div></div>
+    </div>
+</div>
+
+<h2>JetBrains Mono <span style="font-size:12px;color:#8A94A3;font-weight:400">（1363 字符，纯拉丁，无中文）</span></h2>
+<div class="card">
+    <pre><span class="c">// Regular —— 日志、代码、数字对齐都很稳</span>
+<span class="k">const</span> cfg = { <span class="n">port</span>: <span class="n">6099</span>, <span class="n">token</span>: <span class="s">"napcat"</span>, <span class="n">debug</span>: <span class="k">true</span> };
+<span class="k">await</span> ws.send(JSON.stringify({ action: <span class="s">"send_msg"</span> }));
+
+<span class="c">// 数字等宽，日志列对齐</span>
+2026-09-01 14:03:11  [INFO]  recv  0.8 ms   1024 B
+2026-09-01 14:03:12  [WARN]  recv 12.4 ms  32768 B</pre>
+    <div style="margin-top:12px; padding:0 4px">
+        <div style="font-family:'JBLocal',Consolas,monospace;font-style:italic;font-size:14px;color:#C8D3E0">
+            Italic 斜体样例 —— the quick brown fox jumps over the lazy dog 0123456789
+        </div>
+    </div>
+    <div class="scale">
+        <div style="font-family:'JBLocal',Consolas,monospace;font-size:11px">11px  0O1lI|  =&gt;  !=  ::  //</div>
+        <div style="font-family:'JBLocal',Consolas,monospace;font-size:13px">13px  0O1lI|  =&gt;  !=  ::  //</div>
+        <div style="font-family:'JBLocal',Consolas,monospace;font-size:15px">15px  0O1lI|  =&gt;  !=  ::  //</div>
+    </div>
+</div>
+
+<h2>落地到 DMShoot（PySide6）的建议</h2>
+<table>
+    <tr><th>场景</th><th>建议</th><th>做法</th></tr>
+    <tr>
+        <td>聊天正文</td><td class="ok">用完整版 TTF</td>
+        <td><code>QFontDatabase.addApplicationFont("tools/fonts/full/AaCute-full.ttf")</code><br>
+            本地桌面 App 带 11 MB 字体完全没压力，一个字都不缺</td>
+    </tr>
+    <tr>
+        <td>界面文案（按钮/标题）</td><td>同上，或自造子集</td>
+        <td>嫌 11 MB 大就把自己 UI 的汉字扫一遍，用 <code>pyftsubset</code> 压到 300 KB 级</td>
+    </tr>
+    <tr>
+        <td>日志 / 代码块</td><td class="ok">直接用</td>
+        <td><code>QFontDatabase.addApplicationFont("tools/fonts/JetBrainsMono.ttf")</code></td>
+    </tr>
+    <tr>
+        <td style="color:#FF8F8F">⚠ 格式坑</td><td>Qt 不认 woff</td>
+        <td><code>addApplicationFont</code> 只支持 <b>TTF / OTF</b>。
+            那 291 KB 的 <code>AaCute.woff</code> 在 PySide6 里<b>加载不了</b>，只能用 TTF</td>
+    </tr>
+</table>
+
+<script>
+    document.querySelectorAll('.testrow').forEach(el => {
+        const miss = new Set(Array.from(el.dataset.miss));
+        el.innerHTML = Array.from(el.textContent)
+            .map(c => miss.has(c) ? '<span class="miss">' + c + '</span>' : c)
+            .join('');
+        el.style.fontFamily = "'AaCuteLocal','Microsoft YaHei',sans-serif";
+    });
+</script>
+</body>
+</html>
