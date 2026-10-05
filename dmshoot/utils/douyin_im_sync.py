@@ -107,8 +107,10 @@ async def main():
         if "imapi.douyin.com" in url:
             try:
                 body = await response.body()
-                # get_message_by_init 是最大的 payload，包含会话和消息
-                if "get_message_by_init" in url:
+                # 同一个接口会被调用多次：先到的是完整会话列表（实测 1.79MB），
+                # 之后还会再来一个几十字节的空壳（实测 87B）。原实现是直接赋值，
+                # 空壳会把真数据覆盖掉 —— 所以只保留最大的那个 payload。
+                if "get_message_by_init" in url and (raw_data is None or len(body) > len(raw_data)):
                     raw_data = body
                 sys.stderr.write(f"IMAPI_CAPTURE: url={url[:120]} size={len(body)}\n")
             except:
@@ -131,9 +133,13 @@ async def main():
         # 等 JS 加载 IM 面板，尝试点击消息按钮
         for i in range(10):
             await asyncio.sleep(2)
-            if raw_data:
+            # 空壳响应只有几十字节；等到像样的 payload 再收工，避免拿着空壳就退出
+            if raw_data and len(raw_data) > 1024:
                 sys.stderr.write(f"Got im_init data ({len(raw_data)} bytes) at t={(i+1)*2}s\n")
                 break
+            if raw_data:
+                sys.stderr.write(
+                    f"t={(i+1)*2}s: 目前只有 {len(raw_data)} bytes（疑似空壳），继续等待更大的 payload...\n")
             if i == 2 and not raw_data:
                 sys.stderr.write(f"t={(i+1)*2}s: trying to click message button...\n")
                 try:
@@ -316,9 +322,18 @@ def get_cached_messages() -> list[dict]:
 def _parse_protobuf(raw: bytes, my_uid: str) -> list[dict]:
     conv_pattern = re.compile(rb'0:1:(\d+):(\d+)')
     peer_set = {}
-    for peer_bytes, _ in conv_pattern.findall(raw):
-        peer = peer_bytes.decode()
-        if peer not in peer_set:
+    for first_bytes, second_bytes in conv_pattern.findall(raw):
+        first, second = first_bytes.decode(), second_bytes.decode()
+        # 实测会话串是 0:1:{my_uid}:{peer_uid}（我的一侧在前，19/20 都是这种），
+        # 也可能反过来。原实现直接取第一个字段，于是把"我自己"当成了联系人，
+        # 真正的会话全被漏掉（1.79MB 的包只解析出 2 个会话，其中一个还是我）。
+        if first == my_uid and second != my_uid:
+            peer = second
+        elif second == my_uid and first != my_uid:
+            peer = first
+        else:
+            peer = first
+        if peer and peer != my_uid and peer not in peer_set:
             peer_set[peer] = True
 
     # 只靠 API 查昵称，不硬编码
@@ -329,13 +344,20 @@ def _parse_protobuf(raw: bytes, my_uid: str) -> list[dict]:
     my_sec = ""
     sec_uids = {}
     for peer in peer_set:
-        for m in re.finditer(f'0:1:{peer}:{my_uid}'.encode(), raw):
-            secs = sec_pat.findall(raw[m.start():m.start()+3000])
-            for s in secs:
-                d = s.decode()
-                if not my_sec: my_sec = d; continue
-                if d != my_sec: sec_uids[peer] = d; break
-            if peer in sec_uids: break
+        # 两种顺序都试，否则这个字段永远取不到
+        for pattern in (f'0:1:{my_uid}:{peer}', f'0:1:{peer}:{my_uid}'):
+            hit = False
+            for m in re.finditer(pattern.encode(), raw):
+                secs = sec_pat.findall(raw[m.start():m.start()+3000])
+                for s in secs:
+                    d = s.decode()
+                    if not my_sec: my_sec = d; continue
+                    if d != my_sec: sec_uids[peer] = d; break
+                if peer in sec_uids:
+                    hit = True
+                    break
+            if hit:
+                break
 
     return [{'peer_uid': p, 'nickname': nick_map.get(p, f'用户{p}'),
              'sec_uid': sec_uids.get(p, ''), 'avatar': ''} for p in peer_set]
@@ -389,19 +411,28 @@ def fetch_conversations_sync(cookie_str: str) -> list[dict]:
         auth = create_auth(cookie_str)
         my_uid = str(auth.get_uid())
         convs = _parse_protobuf(raw, my_uid)
-        # 解析消息
-        _parse_and_cache_messages(raw, my_uid)
-        # 尝试补全用户信息
-        enriched = False
+        if convs:
+            # 解析消息
+            _parse_and_cache_messages(raw, my_uid)
+            # 尝试补全用户信息
+            enriched = False
+            try:
+                _enrich_all(convs, cookie_str)
+                enriched = True
+                logger.success(f"L2 昵称补全成功 → {len(convs)}会话")
+            except Exception:
+                logger.warning("L2 昵称补全失败，将用占位名")
+            if enriched:
+                _save_json_cache(key, convs)
+            return convs
+        # 缓存里解析不出任何会话（实测抓到过 87 字节的空响应）。
+        # 原实现会照样 return，于是每次启动都"命中缓存 → 0 会话"，永远不会再抓一次。
+        logger.warning(
+            f"L2 缓存解析出 0 会话（{len(raw)} bytes），判定缓存失效，删除后改用 L3 重新抓取")
         try:
-            _enrich_all(convs, cookie_str)
-            enriched = True
-            logger.success(f"L2 昵称补全成功 → {len(convs)}会话")
-        except Exception:
-            logger.warning("L2 昵称补全失败，将用占位名")
-        if enriched:
-            _save_json_cache(key, convs)
-        return convs
+            (CACHE_DIR / f"im_init_{key}.bin").unlink()
+        except OSError:
+            pass
 
     # L3: 子进程 Playwright（同步获取 protobuf + 用户数据）
     logger.info("缓存未命中，启动 L3(Playwright) 拉取...")
