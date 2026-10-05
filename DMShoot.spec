@@ -38,6 +38,11 @@ hiddenimports = [
     "fontTools.subset",
     "fontTools.ttLib",
     "brotli",
+    # 抖音 SDK 的依赖：SDK 模块来自 external/（运行时才进 sys.path），
+    # PyInstaller 跟不进 dy_apis/douyin_api.py，必须显式声明，否则 exe 里照样缺模块
+    "google.protobuf",
+    "protobuf_to_dict",
+    "six",
 ]
 
 # ── 数据文件 ──

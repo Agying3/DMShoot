@@ -135,7 +135,7 @@ class Sidebar(QWidget):
             return
         text = str(status or "")
         lower = text.lower()
-        if (any(kw in text for kw in ["认证失败", "过期", "未登录", "Cookie", "失效"])
+        if (any(kw in text for kw in ["认证失败", "过期", "未登录", "Cookie", "失效", "依赖缺失"])
                 or any(kw in lower for kw in ["error", "failed", "unauthorized"])):
             row.set_status("error", text)
         elif any(kw in text for kw in ["重连", "断线恢复", "稍后重试", "重试间隔"]):
