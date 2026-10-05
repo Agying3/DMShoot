@@ -1,11 +1,11 @@
 """性能图表 — QPainter 纯手绘 + 动画 + 双列布局"""
 from PySide6.QtCore import (
-    Qt, QTimer, QRectF, QPointF, QPropertyAnimation,
-    QEasingCurve, Property, Signal
+    Qt, QTimer, QRect, QRectF, QPoint, QPointF, QPropertyAnimation,
+    QEasingCurve, Property, Signal, QEvent, QVariantAnimation
 )
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPainterPath
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QPainterPath, QRegion, QCursor
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout, QComboBox,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QGridLayout,
     QPushButton, QCheckBox, QDialog, QFrame, QScrollArea, QSizePolicy,
 )
 from shiboken6 import isValid
@@ -20,6 +20,507 @@ _SCHEMES = {
     "mono":   {"p": "#5f5e5a", "a": "#d3d1c7", "g": 4, "t": 180},
 }
 _BARC = ["#378add","#74c7ec","#a6e3a1","#fab387","#cba6f7","#f9e2af","#f38ba8"]
+
+_CHART_NAMES = (
+    "请求管道甘特图", "API 指标", "各平台消息速率",
+    "时间分布", "线程 & 工作线程", "消息分析",
+)
+_CHART_SHORT_NAMES = ("请求管道", "API 指标", "消息速率", "时间分布", "线程", "消息分析")
+_PIE_COLORS = {
+    "base": "#1A1B25", "sector": "#252630", "hover": "#34343F",
+    "text": "#E6E3DD", "muted": "#9A98A1", "accent": "#F0C060",
+}
+_PIE_SURFACE_OPACITY = 0.94
+
+
+class _PieTrigger(QPushButton):
+    def __init__(self, selector):
+        super().__init__(selector)
+        self._selector = selector
+        self._hold_timer = QTimer(self)
+        self._hold_timer.setSingleShot(True)
+        self._hold_timer.setInterval(200)
+        self._hold_timer.timeout.connect(self._open_on_hold)
+        self.setFixedSize(44, 44)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setAccessibleName("选择性能图表")
+        self.setToolTip("单击打开圆盘 · 长按拖动预览，松开确认")
+
+    def hitButton(self, point):
+        return math.hypot(point.x() - 22, point.y() - 22) <= 22
+
+    def mousePressEvent(self, event):
+        super().mousePressEvent(event)
+        if event.button() == Qt.LeftButton and self.hitButton(event.position().toPoint()):
+            self._hold_timer.start()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._hold_timer.stop()
+        super().mouseReleaseEvent(event)
+
+    def _open_on_hold(self):
+        if self.isVisible() and self.isEnabled():
+            self.setDown(False)
+            self._selector._popup.show_for(self, self._selector.currentIndex(), drag_select=True)
+
+    def hideEvent(self, event):
+        self._hold_timer.stop()
+        self.setDown(False)
+        super().hideEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        colors = self._selector.colors()
+        surface = QColor(colors["hover"] if self.underMouse() else colors["sector"])
+        surface.setAlphaF(_PIE_SURFACE_OPACITY)
+        painter.setBrush(surface)
+        border = colors["accent"] if self.hasFocus() or self._selector._popup.isVisible() else colors["muted"]
+        painter.setPen(QPen(QColor(border), 1.2))
+        painter.drawEllipse(QRectF(1, 1, 42, 42))
+        painter.setPen(Qt.NoPen)
+        for index in range(6):
+            color = QColor(colors["accent"] if index == self._selector._display_index() else colors["muted"])
+            painter.setBrush(color)
+            painter.drawPie(QRectF(12, 12, 20, 20), (120 - index * 60) * 16, -56 * 16)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.update()
+
+
+class _ChartPiePopup(QWidget):
+    chosen = Signal(int)
+
+    def __init__(self, selector):
+        super().__init__(selector, Qt.Popup | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
+        self.setObjectName("ChartPiePopup")
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setMouseTracking(True)
+        self.setAccessibleName("性能图表圆盘菜单")
+        self._selector = selector
+        self._current_index = 0
+        self._focus_index = 0
+        self._drag_selecting = False
+        self._hover_index = -1
+        self._hover_levels = [0.0] * 6
+        self._hover_from = self._hover_levels.copy()
+        self._hover_to = self._hover_levels.copy()
+        self._hover_animation = QVariantAnimation(self)
+        self._hover_animation.setDuration(140)
+        self._hover_animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._hover_animation.setStartValue(0.0)
+        self._hover_animation.setEndValue(1.0)
+        self._hover_animation.valueChanged.connect(self._advance_hover)
+        self._pressed_index = None
+        self._buttons = []
+        for index, title in enumerate(_CHART_NAMES):
+            button = QPushButton(_CHART_SHORT_NAMES[index], self)
+            button.setCheckable(True)
+            button.setAutoExclusive(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setToolTip(title)
+            button.setAccessibleName(title)
+            button.setMouseTracking(True)
+            button.installEventFilter(self)
+            button.clicked.connect(lambda checked=False, selected=index: self._choose(selected))
+            self._buttons.append(button)
+        self._center_button = QPushButton(self)
+        self._center_button.setObjectName("ChartPieCenter")
+        self._center_button.setCursor(Qt.PointingHandCursor)
+        self._center_button.setMouseTracking(True)
+        self._center_button.setToolTip("关闭菜单，保留当前图表")
+        self._center_button.setAccessibleName("关闭图表选择")
+        self._center_button.installEventFilter(self)
+        self._center_button.clicked.connect(self.hide)
+        self.resize(320, 320)
+        self.update_style()
+
+    def update_style(self):
+        colors = self._selector.colors()
+        self.setStyleSheet(
+            "QWidget#ChartPiePopup { background: transparent; border: none; }"
+            f"QPushButton {{ background: transparent; border: none; padding: 0;"
+            f"color: {colors['text']}; font-size: 12px; font-weight: 500; }}"
+            f"QPushButton:checked {{ color: {colors['accent']}; font-weight: 600; }}"
+            f"QPushButton#ChartPieCenter {{ color: {colors['accent']}; font-size: 11px; }}"
+        )
+        self.update()
+
+    def _advance_hover(self, progress):
+        self._hover_levels = [
+            start + (target - start) * progress
+            for start, target in zip(self._hover_from, self._hover_to)
+        ]
+        self.update()
+
+    def _set_hover(self, index):
+        if not self.isVisible():
+            return
+        index = index if index is not None and index >= 0 else -1
+        if index == self._hover_index:
+            return
+        self._hover_index = index
+        if self._drag_selecting:
+            self._selector._set_preview(index)
+            title = _CHART_SHORT_NAMES[self._selector._display_index()]
+            self._center_button.setText(("预览\n" if index >= 0 else "当前\n") + title)
+        self._hover_animation.stop()
+        self._hover_from = self._hover_levels.copy()
+        self._hover_to = [1.0 if position == index else 0.0 for position in range(6)]
+        self._hover_animation.start()
+
+    def _reset_hover(self):
+        self._hover_animation.stop()
+        self._hover_index = -1
+        self._hover_levels = [0.0] * 6
+        self._hover_from = self._hover_levels.copy()
+        self._hover_to = self._hover_levels.copy()
+
+    def _center(self):
+        return QPointF(self.width() / 2, self.height() / 2)
+
+    def _sector_path(self, index):
+        center = self._center()
+        radius = self.width() / 2 - 6
+        outer = QRectF(center.x() - radius, center.y() - radius, radius * 2, radius * 2)
+        inner = QRectF(center.x() - 40, center.y() - 40, 80, 80)
+        angle = math.radians(-120 + index * 60)
+        end_angle = angle + math.pi / 3
+        path = QPainterPath()
+        path.moveTo(center.x() + radius * math.cos(angle), center.y() + radius * math.sin(angle))
+        path.arcTo(outer, 120 - index * 60, -60)
+        path.lineTo(center.x() + 40 * math.cos(end_angle), center.y() + 40 * math.sin(end_angle))
+        path.arcTo(inner, 60 - index * 60, 60)
+        path.closeSubpath()
+        return path
+
+    def _hit_index(self, point):
+        center = self._center()
+        offset_x, offset_y = point.x() - center.x(), point.y() - center.y()
+        radius = math.hypot(offset_x, offset_y)
+        if radius < 40:
+            return -1
+        if radius > self.width() / 2 - 6:
+            return None
+        angle = math.degrees(math.atan2(offset_y, offset_x))
+        return int((round((angle + 120) % 360, 9) % 360) // 60)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.setMask(QRegion(self.rect(), QRegion.Ellipse))
+        center = self._center()
+        radius = self.width() * 0.33
+        button_width = 84 if self.width() >= 320 else 76
+        for index, button in enumerate(self._buttons):
+            angle = math.radians(-90 + index * 60)
+            button.setGeometry(
+                round(center.x() + radius * math.cos(angle) - button_width / 2),
+                round(center.y() + radius * math.sin(angle) - 16), button_width, 32,
+            )
+        self._center_button.setGeometry(round(center.x() - 40), round(center.y() - 40), 80, 80)
+        self._center_button.setMask(QRegion(self._center_button.rect(), QRegion.Ellipse))
+
+    def show_for(self, anchor, current_index, drag_select=False):
+        anchor_center = anchor.mapToGlobal(anchor.rect().center())
+        screen = QApplication.screenAt(anchor_center) or anchor.screen()
+        available = screen.availableGeometry()
+        diameter = 320 if min(available.width(), available.height()) >= 344 else 280
+        self.resize(diameter, diameter)
+        origin_x = anchor_center.x() - diameter // 2
+        origin_y = (
+            anchor_center.y() - diameter // 2 if drag_select
+            else anchor.mapToGlobal(QPoint(0, anchor.height())).y() + 8
+        )
+        if not drag_select and origin_y + diameter > available.bottom() - 4:
+            origin_y = anchor.mapToGlobal(QPoint(0, 0)).y() - diameter - 8
+        origin_x = max(available.left() + 4, min(origin_x, available.right() - diameter - 3))
+        origin_y = max(available.top() + 4, min(origin_y, available.bottom() - diameter - 3))
+        self.move(origin_x, origin_y)
+        self._current_index = current_index
+        self._focus_index = current_index
+        self._reset_hover()
+        self._pressed_index = None
+        self._drag_selecting = drag_select
+        if drag_select:
+            QApplication.instance().installEventFilter(self)
+        for index, button in enumerate(self._buttons):
+            button.setChecked(index == current_index)
+            button.setAccessibleDescription("当前图表" if index == current_index else "切换图表")
+        self._center_button.setText("当前\n" + _CHART_SHORT_NAMES[current_index])
+        self._center_button.setToolTip(
+            "松开取消预览，恢复原图表" if drag_select else "关闭菜单，保留当前图表"
+        )
+        self.show()
+        self._buttons[current_index].setFocus(Qt.PopupFocusReason)
+        if drag_select:
+            self._set_hover(self._drag_index(QCursor.pos()))
+        self.update()
+        anchor.update()
+
+    def _drag_index(self, global_point):
+        anchor = self._selector._button
+        if anchor.hitButton(anchor.mapFromGlobal(global_point)):
+            return -1
+        return self._hit_index(self.mapFromGlobal(global_point))
+
+    def _finish_drag(self, global_point):
+        index = self._drag_index(global_point)
+        if index is not None and index >= 0:
+            self._choose(index)
+        else:
+            self.hide()
+
+    def _choose(self, index):
+        self.chosen.emit(index)
+        self.hide()
+
+    def _handle_key(self, key, source=None):
+        if key == Qt.Key_Escape:
+            self.hide()
+        elif key in (Qt.Key_Left, Qt.Key_Up, Qt.Key_Right, Qt.Key_Down):
+            direction = -1 if key in (Qt.Key_Left, Qt.Key_Up) else 1
+            self._focus_index = (self._focus_index + direction) % 6
+            self._set_hover(-1)
+            self._buttons[self._focus_index].setFocus(Qt.TabFocusReason)
+            self.update()
+        elif key in (Qt.Key_Return, Qt.Key_Enter):
+            if source is self._center_button:
+                self.hide()
+            else:
+                self._choose(self._focus_index)
+        else:
+            return False
+        return True
+
+    def eventFilter(self, watched, event):
+        if self._drag_selecting:
+            if event.type() == QEvent.MouseMove:
+                self._set_hover(self._drag_index(event.globalPosition().toPoint()))
+                return True
+            if event.type() == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                self._finish_drag(event.globalPosition().toPoint())
+                return True
+            if event.type() in (QEvent.Enter, QEvent.Leave):
+                self._set_hover(self._drag_index(QCursor.pos()))
+                return super().eventFilter(watched, event)
+        if event.type() == QEvent.KeyPress and self._handle_key(event.key(), watched):
+            return True
+        if watched in self._buttons or watched is self._center_button:
+            if event.type() in (QEvent.Enter, QEvent.MouseMove):
+                point = watched.mapTo(self, event.position().toPoint())
+                self._set_hover(self._hit_index(point))
+            elif event.type() == QEvent.Leave:
+                self._set_hover(self._hit_index(self.mapFromGlobal(QCursor.pos())))
+        if watched in self._buttons:
+            index = self._buttons.index(watched)
+            if event.type() == QEvent.FocusIn:
+                self._focus_index = index
+                self.update()
+            elif event.type() == QEvent.FocusOut:
+                self.update()
+        return super().eventFilter(watched, event)
+
+    def focusNextPrevChild(self, forward):
+        buttons = self._buttons + [self._center_button]
+        focused = self.focusWidget()
+        index = buttons.index(focused) if focused in buttons else self._current_index
+        buttons[(index + (1 if forward else -1)) % len(buttons)].setFocus(Qt.TabFocusReason)
+        return True
+
+    def keyPressEvent(self, event):
+        if self._handle_key(event.key()):
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        self._set_hover(self._hit_index(event.position()))
+
+    def leaveEvent(self, event):
+        self._set_hover(self._hit_index(self.mapFromGlobal(QCursor.pos())))
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._pressed_index = self._hit_index(event.position())
+            if self._pressed_index is None:
+                self.hide()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            index = self._hit_index(event.position())
+            if index == self._pressed_index:
+                if index == -1:
+                    self.hide()
+                elif index is not None:
+                    self._choose(index)
+            self._pressed_index = None
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+    def hideEvent(self, event):
+        if self._drag_selecting:
+            self._drag_selecting = False
+            QApplication.instance().removeEventFilter(self)
+            self._selector._button._hold_timer.stop()
+            self._selector._button.setDown(False)
+            self._selector._set_preview(-1)
+        self._reset_hover()
+        super().hideEvent(event)
+        self._selector._button.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        colors = self._selector.colors()
+        surface = QColor(colors["sector"])
+        surface.setAlphaF(_PIE_SURFACE_OPACITY)
+        for index in range(6):
+            path = self._sector_path(index)
+            painter.fillPath(path, surface)
+            painter.setCompositionMode(QPainter.CompositionMode_SourceAtop)
+            if self._hover_levels[index] > 0:
+                hover = QColor(colors["hover"])
+                hover.setAlphaF(self._hover_levels[index])
+                painter.fillPath(path, hover)
+            if index == self._current_index:
+                selected = QColor(colors["accent"])
+                selected.setAlpha(31)
+                painter.fillPath(path, selected)
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+            border = QColor(colors["accent"] if index == self._current_index else colors["muted"])
+            if index != self._current_index:
+                border.setAlpha(65)
+            painter.setPen(QPen(border, 1.3 if index == self._current_index else 0.8))
+            painter.drawPath(path)
+            if self._buttons[index].hasFocus() and index != self._current_index:
+                painter.setPen(QPen(QColor(colors["text"]), 1.1, Qt.DashLine))
+                painter.drawPath(path)
+        center = self._center()
+        center_surface = QColor(colors["base"])
+        center_surface.setAlphaF(_PIE_SURFACE_OPACITY)
+        painter.setBrush(center_surface)
+        painter.setPen(QPen(QColor(colors["muted"]), 0.8))
+        painter.drawEllipse(QRectF(center.x() - 40, center.y() - 40, 80, 80))
+        if self._center_button.hasFocus():
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor(colors["text"]), 1.1, Qt.DashLine))
+            painter.drawEllipse(QRectF(center.x() - 37, center.y() - 37, 74, 74))
+
+
+class _ChartPieSelector(QWidget):
+    """保持原图表索引和信号的圆盘选择器。"""
+    currentIndexChanged = Signal(int)
+    previewIndexChanged = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ChartPieSelector")
+        self._current_index = 0
+        self._preview_index = None
+        self._dark = True
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        self._button = _PieTrigger(self)
+        self._popup = _ChartPiePopup(self)
+        self._popup.chosen.connect(self.setCurrentIndex)
+        self._button.clicked.connect(self._show_popup)
+        layout.addWidget(self._button)
+        labels = QVBoxLayout()
+        labels.setSpacing(2)
+        self._caption = QLabel("图表视图", self)
+        self._label = QLabel(_CHART_NAMES[0], self)
+        self._label.setToolTip(_CHART_NAMES[0])
+        self._button.setAccessibleDescription("当前图表：" + _CHART_NAMES[0])
+        self._label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        labels.addWidget(self._caption)
+        labels.addWidget(self._label)
+        layout.addLayout(labels, stretch=1)
+        self.setMinimumHeight(48)
+        self.setDark(True)
+
+    def colors(self):
+        if self._dark:
+            return _PIE_COLORS
+        return {
+            "base": "#FAF8F5", "sector": "#FFFFFF", "hover": "#F4ECE7",
+            "text": "#50202D", "muted": "#8C7480", "accent": "#AD783A",
+        }
+
+    def currentIndex(self):
+        return self._current_index
+
+    def _display_index(self):
+        return self._current_index if self._preview_index is None else self._preview_index
+
+    def _update_display(self):
+        index = self._display_index()
+        previewing = self._preview_index is not None
+        self._caption.setText("预览 · 松开确认" if previewing else "图表视图")
+        self._label.setText(_CHART_NAMES[index])
+        self._label.setToolTip(_CHART_NAMES[index])
+        self._button.setAccessibleDescription(("正在预览：" if previewing else "当前图表：") + _CHART_NAMES[index])
+        self._button.update()
+
+    def _set_preview(self, index):
+        index = index if 0 <= index < len(_CHART_NAMES) else None
+        if index == self._preview_index:
+            return
+        previous = self._display_index()
+        self._preview_index = index
+        self._update_display()
+        displayed = self._display_index()
+        if displayed != previous:
+            self.previewIndexChanged.emit(displayed)
+
+    def setCurrentIndex(self, index):
+        if not isinstance(index, int) or not 0 <= index < len(_CHART_NAMES):
+            return
+        if index == self._current_index and self._preview_index is None:
+            return
+        changed = index != self._current_index
+        previous = self._display_index()
+        self._current_index = index
+        self._preview_index = None
+        self._update_display()
+        if changed:
+            self.currentIndexChanged.emit(index)
+        elif previous != index:
+            self.previewIndexChanged.emit(index)
+
+    def setDark(self, dark):
+        self._dark = bool(dark)
+        colors = self.colors()
+        self.setStyleSheet("QWidget#ChartPieSelector { background: transparent; border: none; }")
+        self._caption.setStyleSheet(
+            f"QLabel {{ background: transparent; border: none; padding: 0; color: {colors['muted']}; font-size: 10px; }}"
+        )
+        self._label.setStyleSheet(
+            f"QLabel {{ background: transparent; border: none; padding: 0; color: {colors['text']}; font-size: 13px; }}"
+        )
+        self._popup.update_style()
+        self._button.update()
+
+    def _show_popup(self):
+        if self._popup.isVisible():
+            self._popup.hide()
+        else:
+            self._popup.show_for(self._button, self._current_index)
+
+    def hideEvent(self, event):
+        self._popup.hide()
+        super().hideEvent(event)
 
 
 def _ch_str(val: float, threshold: float, lower_is_better: bool = False) -> str:
@@ -48,39 +549,37 @@ def _hex_rgba(h, a):
 # ═══════════════════════════════════════════
 
 class _MetricCard(QFrame):
-    def __init__(self, label, value, change, color, ch_color, parent=None):
+    def __init__(self, label, value, change, color, ch_color, parent=None, dark=True):
         super().__init__(parent)
+        self.setObjectName("PerfMetricCard")
+        background = "#252630" if dark else "#FFFFFF"
+        border = "rgba(255,255,255,0.07)" if dark else "rgba(210,120,140,0.22)"
+        label_color = "#9A98A1" if dark else "rgba(80,30,45,0.65)"
         self.setStyleSheet(
-            "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);"
-            "border-radius:8px;padding:10px 12px")
-        self.setMinimumHeight(70)
-        ly = QVBoxLayout(self); ly.setContentsMargins(0,0,0,0); ly.setSpacing(3)
+            f"QFrame#PerfMetricCard {{ background: {background}; border: 1px solid {border};"
+            "border-radius: 12px; padding: 0; }"
+            "QLabel { background: transparent; border: none; padding: 0; }"
+        )
+        self.setFixedHeight(96)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        ly = QVBoxLayout(self); ly.setContentsMargins(12, 10, 12, 10); ly.setSpacing(3)
         lbl = QLabel(label)
-        lbl.setWordWrap(True)
-        lbl.setStyleSheet("color:rgba(255,255,255,0.35);font-size:10px")
+        lbl.setStyleSheet(f"color:{label_color};font-size:11px")
         ly.addWidget(lbl)
-        val = QLabel(value); val.setStyleSheet(f"color:{color};font-size:20px;font-weight:500")
+        val = QLabel(value); val.setStyleSheet(f"color:{color};font-size:24px;font-weight:600")
+        val.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        val.setToolTip(value)
         ly.addWidget(val)
         ch = QLabel(change)
-        ch.setWordWrap(True)
-        ch.setStyleSheet(f"color:{ch_color};font-size:10px")
+        ch.setStyleSheet(f"color:{ch_color};font-size:11px")
         ly.addWidget(ch)
 
 
-class _MetricCardLight(QFrame):
+class _MetricCardLight(_MetricCard):
     """浅色主题指标卡 — 粉色系边框+文字"""
     def __init__(self, label, value, change, color, ch_color, parent=None):
-        super().__init__(parent)
-        self.setStyleSheet(
-            "background:#fff;border:1px solid rgba(210,120,140,0.25);"
-            "border-radius:8px;padding:14px 16px")
-        ly = QVBoxLayout(self); ly.setContentsMargins(0,0,0,0); ly.setSpacing(4)
-        lbl = QLabel(label); lbl.setStyleSheet("color:rgba(80,30,45,0.55);font-size:11px")
-        ly.addWidget(lbl)
-        val = QLabel(value); val.setStyleSheet(f"color:{color};font-size:24px;font-weight:500")
-        ly.addWidget(val)
-        ch = QLabel(change); ch.setStyleSheet(f"color:{ch_color};font-size:11px")
-        ly.addWidget(ch)
+        super().__init__(label, value, change, color, ch_color, parent, dark=False)
 
 
 # ═══════════════════════════════════════════
@@ -532,9 +1031,10 @@ class _AnalyticsWidget(QWidget):
 
         pad = 14; y = 8
         # ── 标题 ──
-        p.setPen(tc); p.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        p.drawText(pad, y, w - pad * 2, 20, Qt.AlignLeft, "消息分析 · 近7天")
-        y += 24
+        if not ch._compact:
+            p.setPen(tc); p.setFont(QFont("Segoe UI", 13, QFont.Bold))
+            p.drawText(pad, y, w - pad * 2, 20, Qt.AlignLeft, "消息分析 · 近7天")
+            y += 24
 
         # ── 每日摘要行 ──
         p.setFont(QFont("Segoe UI", 10))
@@ -607,6 +1107,9 @@ class _AnalyticsWidget(QWidget):
         else:
             status_line = "暂无数据"
         p.drawText(pad, y, w - pad * 2, 16, Qt.AlignLeft, status_line)
+        p.end()
+        if ch._compact and self.minimumHeight() != y + 28:
+            self.setMinimumHeight(y + 28)
 
 
 # ═══════════════════════════════════════════
@@ -632,17 +1135,17 @@ class _Card(QFrame):
         if dark:
             self.setStyleSheet(
                 "#c{background:#1a1b25;border:1px solid rgba(255,255,255,0.06);"
-                "border-radius:10px;padding:12px}")
+                "border-radius:12px;padding:0}")
             self.h.setStyleSheet(
-                "color:rgba(255,255,255,0.35);font-size:11px;"
-                "font-weight:500;letter-spacing:0.3px")
+                "background:transparent;border:none;padding:0;"
+                "color:#E6E3DD;font-size:12px;font-weight:600")
         else:
             self.setStyleSheet(
                 "#c{background:#fff;border:1px solid rgba(210,120,140,0.22);"
-                "border-radius:10px;padding:12px}")
+                "border-radius:12px;padding:0}")
             self.h.setStyleSheet(
-                "color:rgba(80,30,45,0.55);font-size:11px;"
-                "font-weight:500;letter-spacing:0.3px")
+                "background:transparent;border:none;padding:0;"
+                "color:rgba(80,30,45,0.75);font-size:12px;font-weight:600")
 
     def setw(self, w):
         if self._inner:
@@ -688,11 +1191,12 @@ class _Card(QFrame):
 class PerfChart(QWidget):
     def __init__(self, m=None, parent=None, compact: bool = False):
         super().__init__(parent)
+        self.setObjectName("PerfChart")
         self._s = "blue"; self._d = True
         self._m = m or get_monitor()
         self._compact = compact
 
-        ly = QVBoxLayout(self); ly.setContentsMargins(0, 0, 0, 0)
+        ly = QVBoxLayout(self); ly.setContentsMargins(0, 0, 0, 0); ly.setSpacing(12)
 
         # ── 工具栏（仅非 compact 模式，即 PerfWindow 中显示）──
         if not compact:
@@ -714,14 +1218,15 @@ class PerfChart(QWidget):
             tb.addWidget(self._tl); tb.addWidget(self._td); ly.addLayout(tb)
 
         # ── 指标卡 ──
-        self._metrics_row = QHBoxLayout(); self._metrics_row.setSpacing(12)
+        self._metrics_row = QGridLayout(); self._metrics_row.setSpacing(12)
+        self._metric_columns = 4
         ly.addLayout(self._metrics_row)
 
         # 紧凑模式：下拉选择器（在图表区上方）
         if compact:
-            self._chart_combo = QComboBox()
-            self._chart_combo.addItems(["请求管道甘特图", "API 指标", "各平台消息速率", "时间分布", "线程 & 工作线程", "消息分析"])
+            self._chart_combo = _ChartPieSelector(self)
             self._chart_combo.currentIndexChanged.connect(self._on_chart_select)
+            self._chart_combo.previewIndexChanged.connect(self._on_chart_select)
             ly.addWidget(self._chart_combo)
             self._update_combo_style()
 
@@ -759,12 +1264,12 @@ class PerfChart(QWidget):
         self._analytics_c = _Card("消息分析 (近7天)")
 
         if compact:
-            self._grid.addWidget(self._gantt_c)
-            self._grid.addWidget(self._line_c)
-            self._grid.addWidget(self._area_c)
-            self._grid.addWidget(self._dough_c)
-            self._grid.addWidget(self._bar_c)
-            self._grid.addWidget(self._analytics_c)
+            self._grid.addWidget(self._gantt_c, 0, Qt.AlignTop)
+            self._grid.addWidget(self._line_c, 0, Qt.AlignTop)
+            self._grid.addWidget(self._area_c, 0, Qt.AlignTop)
+            self._grid.addWidget(self._dough_c, 0, Qt.AlignTop)
+            self._grid.addWidget(self._bar_c, 0, Qt.AlignTop)
+            self._grid.addWidget(self._analytics_c, 0, Qt.AlignTop)
             self._chart_cards = [self._gantt_c, self._line_c, self._area_c, self._dough_c, self._bar_c, self._analytics_c]
             for i, card in enumerate(self._chart_cards):
                 card.setVisible(i == 0)
@@ -789,7 +1294,7 @@ class PerfChart(QWidget):
         self._analytics_c.clicked.connect(lambda: self._show_modal("analytics"))
 
         QTimer.singleShot(0, self._rb)
-        self.setStyleSheet("background:#111216;")  # 初始深色
+        self.setStyleSheet("QWidget#PerfChart { background: transparent; }" if compact else "QWidget#PerfChart { background: #111216; }")
         self._tm = QTimer(self); self._tm.timeout.connect(self._tk)
         self._tm.start(3000)
 
@@ -813,7 +1318,8 @@ class PerfChart(QWidget):
         self._update_styles()
         self._rb()
         # 更新自身背景
-        self.setStyleSheet(f"background:{'#111216' if d else '#faf8f5'};")
+        background = "transparent" if self._compact else ("#111216" if d else "#faf8f5")
+        self.setStyleSheet(f"QWidget#PerfChart {{ background: {background}; }}")
         if hasattr(self, '_theme_cb') and self._theme_cb:
             self._theme_cb()
 
@@ -828,19 +1334,7 @@ class PerfChart(QWidget):
         self._update_toolbar_styles()
 
     def _update_combo_style(self):
-        dark = self._d
-        if dark:
-            self._chart_combo.setStyleSheet(
-                "QComboBox{background:#313244;color:#cdd6f4;border:1px solid #45475a;"
-                "border-radius:4px;padding:2px 8px;font-size:12px;}"
-                "QComboBox::drop-down{border:none;}"
-                "QComboBox QAbstractItemView{background:#313244;color:#cdd6f4;}")
-        else:
-            self._chart_combo.setStyleSheet(
-                "QComboBox{background:#fff;color:rgba(80,30,45,0.8);border:1px solid rgba(200,120,140,0.35);"
-                "border-radius:4px;padding:2px 8px;font-size:12px;}"
-                "QComboBox::drop-down{border:none;}"
-                "QComboBox QAbstractItemView{background:#fff;color:rgba(80,30,45,0.8);}")
+        self._chart_combo.setDark(self._d)
 
     def _update_toolbar_styles(self):
         """工具栏按钮（sb/tb）适配浅色/深色"""
@@ -919,16 +1413,34 @@ class PerfChart(QWidget):
                 inner = card.layout()
                 val_lbl = inner.itemAt(1).widget()  # 第二个是数值
                 ch_lbl = inner.itemAt(2).widget()   # 第三个是变化
-                val_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                val_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
                 ch_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 self._metric_refs[0].append(card)
                 self._metric_refs[1].append((val_lbl, ch_lbl))
-                self._metrics_row.addWidget(card)
+            self._layout_metrics(force=True)
         else:
             # 仅更新数值文本
             for i, (val_lbl, ch_lbl) in enumerate(self._metric_refs[1]):
                 val_lbl.setText(vals[i])
                 ch_lbl.setText(changes[i])
+
+    def _layout_metrics(self, force=False):
+        if not hasattr(self, '_metric_refs'):
+            return
+        columns = 2 if self._compact and self.width() < 480 else 4
+        if not force and columns == self._metric_columns:
+            return
+        self._metric_columns = columns
+        while self._metrics_row.count():
+            self._metrics_row.takeAt(0)
+        for column in range(4):
+            self._metrics_row.setColumnStretch(column, 1 if column < columns else 0)
+        for index, card in enumerate(self._metric_refs[0]):
+            self._metrics_row.addWidget(card, index // columns, index % columns)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._layout_metrics()
 
     def _rb(self):
         self._rebuild_metrics()
