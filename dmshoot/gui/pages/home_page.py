@@ -9,6 +9,7 @@ from dmshoot.gui.widgets.ruler import PlatformRuler
 from dmshoot.gui.widgets.contact import ContactList
 from dmshoot.gui.quick_chat_view import ChatView
 from dmshoot.gui.monitor_panel import MonitorPanel
+from dmshoot.core.bus import PlatformStatus
 from dmshoot.storage import database
 from dmshoot.storage.models import SessionRecord
 
@@ -128,6 +129,37 @@ class HomePage(QWidget):
             else:
                 self.chat.show_placeholder(f"暂未连接 {pn}\n\n请前往左侧「登录」扫码连接平台")
 
+    # ── 平台自动跟随 ──
+
+    def _current_platform_has_sessions(self) -> bool:
+        """当前平台是否已有会话。通讯录是节流加载的，所以以数据库为准。"""
+        if self.contacts.list.count() > 0:
+            return True
+        try:
+            return bool(database.get_sessions(self._current_platform))
+        except Exception:
+            return True  # 查不出来时保守处理：宁可不切
+
+    def follow_platform_if_idle(self, platform: str) -> bool:
+        """当前平台没有任何会话时，把首页切到刚连上/刚来消息的平台。
+
+        只解决「平台已连接、消息也进来了，界面却停在空平台」这种看起来像
+        「私信没通」的假象；用户正在看的平台只要已有会话就绝不打扰。
+        """
+        if not platform or platform == self._current_platform:
+            return False
+        if not self.ruler.has_platform(platform):
+            return False
+        if self._current_platform_has_sessions():
+            return False
+        self.ruler.set_active(platform)  # 触发 switched → _on_platform_switch → 重新加载通讯录
+        return True
+
+    def on_platform_status(self, platform: str, status: str, msg: str = ""):
+        """平台真正握手成功（绿灯）时跟随过去；「已保存」这类状态不触发。"""
+        if str(status or "").strip().lower() == PlatformStatus.ONLINE:
+            self.follow_platform_if_idle(platform)
+
     def _on_session_select(self, session_id: str, peer_name: str = "会话"):
         self._current_session = session_id
         database.reset_unread(session_id)  # 进入会话时清零未读
@@ -201,6 +233,9 @@ class HomePage(QWidget):
         # 成功发送的消息仍可先乐观展示，失败回调再按 message_key 撤回。
         if not send_ok:
             return
+        # 别的平台来消息、而当前平台还没有任何会话 → 先把视图跟过去，
+        # 否则用户盯着空平台，会以为私信没收到。
+        self.follow_platform_if_idle(session_id.split(":", 1)[0])
         from dmshoot.storage.models import ChatMessage
         import time as _time
         now = _time.time()
