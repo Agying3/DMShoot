@@ -37,7 +37,13 @@ class PlatformRuler(QWidget):
             btn.setChecked(pid == platform)
         self.switched.emit(platform)
 
+    def has_platform(self, platform: str) -> bool:
+        """刻度尺上是否存在该平台（自动切换前先确认，避免切到不存在的平台）"""
+        return platform in self._btns
+
     def set_active(self, platform: str):
+        if not self.has_platform(platform):
+            return
         # 如果已经是当前平台，跳过
         current = next((pid for pid, btn in self._btns.items() if btn.isChecked()), None)
         if platform != current:

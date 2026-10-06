@@ -28,6 +28,10 @@ def _message_identity(message: dict) -> tuple:
     )
 
 
+_PEER_WINDOW = 1500          # 归属扫描窗口（还会被上一条消息正文结束位置约束）
+_MAX_CONTENT_BYTES = 262144  # 单条正文上限：实测最长约 90KB（分享卡片），256KB 足够
+
+
 def _peer_uid_before_content(
     raw: bytes,
     start: int,
@@ -37,22 +41,31 @@ def _peer_uid_before_content(
     """从当前消息前的局部 protobuf 元数据提取真实对方 UID。
 
     抖音的会话标识以字符串形式嵌在消息元数据中：
-    ``0:1:{peer_uid}:{my_uid}``。它和正文不在同一个 protobuf field，
-    因此只能按当前正文边界做局部关联，不能拿 conversation_short_id 代替。
+    ``0:1:{peer_uid}:{my_uid}`` 或 ``0:1:{my_uid}:{peer_uid}``。
+    它和正文不在同一个 protobuf field，因此只能按当前正文边界做局部关联，
+    不能拿 conversation_short_id 代替。
+
+    ⚠️ 实测 im_init 响应里绝大多数是 **我的一侧在前**（``0:1:{my_uid}:{peer}``），
+    原实现只认另一种方向，265 条消息里只有 2 条能归属 —— 这是"消息全挤到一个
+    会话里/落进孤儿会话"的根因。两种方向都要认，并取最靠近正文的那一条。
     """
     if not my_uid:
         return ""
     my_uid_bytes = my_uid.encode("ascii", errors="ignore")
     if not my_uid_bytes:
         return ""
-    pattern = re.compile(rb"0:1:(\d+):" + re.escape(my_uid_bytes))
-    window_start = max(start, end - 1500)
-    matches = list(pattern.finditer(raw, window_start, end))
-    for match in reversed(matches):
-        peer_uid = match.group(1).decode("ascii", errors="ignore")
-        if peer_uid and peer_uid != my_uid:
-            return peer_uid
-    return ""
+    patterns = (
+        re.compile(rb"0:1:" + re.escape(my_uid_bytes) + rb":(\d+)"),  # {my}:{peer}
+        re.compile(rb"0:1:(\d+):" + re.escape(my_uid_bytes)),         # {peer}:{my}
+    )
+    window_start = max(start, end - _PEER_WINDOW)
+    best_peer, best_pos = "", -1
+    for pattern in patterns:
+        for match in pattern.finditer(raw, window_start, end):
+            peer_uid = match.group(1).decode("ascii", errors="ignore")
+            if peer_uid and peer_uid != my_uid and match.start() > best_pos:
+                best_peer, best_pos = peer_uid, match.start()
+    return best_peer
 
 def extract_messages_from_protobuf(raw: bytes, my_uid: str = "") -> list[dict]:
     """从 im_init protobuf 提取消息列表"""
@@ -71,7 +84,7 @@ def extract_messages_from_protobuf(raw: bytes, my_uid: str = "") -> list[dict]:
         except:
             i += 1; continue
         
-        if content_len < 5 or content_len > 5000 or j + content_len > len(raw):
+        if content_len < 5 or content_len > _MAX_CONTENT_BYTES or j + content_len > len(raw):
             i += 1; continue
         
         content_raw = raw[j:j + content_len]

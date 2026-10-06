@@ -131,6 +131,13 @@ class DouyinAdapter(BaseAdapter):
             self._sync_history()
 
             return True
+        except ImportError as e:
+            # 依赖缺失不是登录问题。以前这里统一报「Cookie 已过期」，
+            # 用户会一遍遍重扫码（真实案例：缺 protobuf_to_dict / protobuf）。
+            logger.error(f"抖音连接失败（缺少 Python 依赖，非登录问题）: {e}")
+            self.on_error(ErrorCategory.INTERNAL, f"缺少依赖: {e}", e)
+            self.bus.set_platform_status("douyin", "依赖缺失", f"{e}（请重装 requirements.txt）")
+            return False
         except Exception as e:
             logger.error(f"抖音连接失败: {e}")
             self.bus.set_platform_status("douyin", "Cookie 已过期", str(e)[:60])

@@ -25,5 +25,7 @@ class SignalWiring:
         mw.bus.session_updated.connect(mw.page_home.refresh_session)
         mw.bus.platform_status.connect(auth_ctrl.on_platform_status)
         mw.bus.platform_status.connect(mw.page_home.refresh_account_avatar)
+        # 平台真连上时，若当前平台还是空的就把首页跟过去，避免"看着空列表以为没收到私信"
+        mw.bus.platform_status.connect(mw.page_home.on_platform_status)
         mw.bus.ai_response.connect(mw._on_ai_response)
         mw.bus.log.connect(mw._on_bus_log)
